@@ -4,24 +4,6 @@
     <img width="300" src="img/logo.png"/>
 </p>
 
-<p align="center">
-    <a href="https://github.com/ullaakut/astronomer">
-        <img src="https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3Dullaakut%26name%3Dastronomer" />
-    </a>
-    <a href="#license">
-        <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat" />
-    </a>
-    <a href="https://hub.docker.com/r/ullaakut/astronomer/">
-        <img src="https://img.shields.io/docker/pulls/ullaakut/astronomer.svg?style=flat" />
-    </a>
-    <a href="https://goreportcard.com/report/github.com/ullaakut/astronomer">
-        <img src="https://goreportcard.com/badge/github.com/ullaakut/astronomer" />
-    </a>
-    <a href="https://github.com/ullaakut/astronomer/releases/latest">
-        <img src="https://img.shields.io/github/release/ullaakut/astronomer.svg?style=flat" />
-    </a>
-</p>
-
 Astronomer is a tool that fetches data from every GitHub user who starred a common repository and computes how likely it is that those users are real humans.
 The goal of Astronomer is to **detect illegitimate GitHub stars from bot accounts**, which could be used to artificially increase the popularity of an open source project.
 
@@ -49,18 +31,6 @@ Trust is computed based on many different factors:
 
 In order to use Astronomer, you'll need a GitHub token with `repo` read rights. You can generate one [in your GitHub Settings > Developer settings > Personal Access Tokens](https://github.com/settings/tokens). Make sure to keep this token secret.
 
-### Docker image
-
-Run the astronomer docker image like such:
-
-```bash
-docker run --rm -t -e GITHUB_TOKEN=$TOKEN -v "/path/to/cache:/data" ullaakut/astronomer repositoryOwner/repositoryName
-```
-
-* The `-t` flag allows you to get a colored output. You can remove it from the command line if you don't care about this.
-* The `-e GITHUB_TOKEN=<your_token>` option is mandatory. The GitHub API won't authorize any requests without it.
-* The `-v "/path/to/your/cache/folder:/data/"` option can be used to cache the responses from the GitHub API on your machine. This means that the next time you run a scan, Astronomer will simply update its cache with the new stargazers since your last scan, and compute the trust levels again. It is highly recommended to use cache if you plan on scanning popular repositories (more than 1000 stars) more than once.
-
 ### Binary
 
 You can also download pre-compiled go binaries from the [Astronomer releases](https://github.com/Ullaakut/astronomer/releases/latest).
@@ -68,42 +38,6 @@ You can also download pre-compiled go binaries from the [Astronomer releases](ht
 For the following commands, if you don't have a `$GOPATH`, feel free to replace the path of destination with what works best for you. (For example, `/usr/local/bin`)
 
 There are no dependencies, since astronomer comes as a statically built binary.
-
-#### Linux
-
-> AMD64
-
-```bash
-curl -o $GOPATH/bin/astronomer -sSLO https://github.com/Ullaakut/astronomer/releases/download/v1.1.3/astronomer-linux-amd64
-```
-
-> ARM
-
-```bash
-curl -o $GOPATH/bin/astronomer -sSLO https://github.com/Ullaakut/astronomer/releases/download/v1.1.3/astronomer-linux-arm
-```
-
-> 386
-
-```bash
-curl -o $GOPATH/bin/astronomer -sSLO https://github.com/Ullaakut/astronomer/releases/download/v1.1.3/astronomer-linux-386
-```
-
-#### MacOS
-
-```bash
-curl -o $GOPATH/bin/astronomer -sSLO https://github.com/Ullaakut/astronomer/releases/download/v1.1.3/astronomer-darwin-amd64
-```
-
-**or**
-
-```bash
-brew tap dkanejs/homebrew-astronomer && brew install astronomer
-```
-
-#### Windows
-
-Download [this file](https://github.com/Ullaakut/astronomer/releases/download/v1.1.3/astronomer-windows-386.exe), rename it to `astronomer` and add it to your path.
 
 ## Arguments and options
 
@@ -121,27 +55,9 @@ Also, Astrolab will receive many improvements in the near future, in order to ga
 
 ## Examples
 
-<p align="left">
-    <img width="65%" src="img/traefik.png">
-</p>
-<p align="left">
-    &puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;
-    <img width="20%" src="https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3Dcontainous%26name%3Dtraefik" />
-</p>
-<p align="right">
-    <img width="65%" src="img/suspicious_repo.png">
-</p>
-<p align="right">
-    <img width="20%" src="https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3Doperator996%26name%3Dyaocl" />
-    &puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;
-</p>
-<p align="left">
-    <img width="65%" src="img/envoy.png">
-</p>
-<p align="left">
-    &puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;&puncsp;
-    <img width="20%" src="https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3Denvoyproxy%26name%3Denvoy" />
-</p>
+![Traefik](img/traefik.png)
+![Suspicious_repo](img/suspicious_repo.png)
+![envoy](img/envoy.png)
 
 ## Questions & Answers
 
