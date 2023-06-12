@@ -31,14 +31,6 @@ Trust is computed based on many different factors:
 
 In order to use Astronomer, you'll need a GitHub token with `repo` read rights. You can generate one [in your GitHub Settings > Developer settings > Personal Access Tokens](https://github.com/settings/tokens). Make sure to keep this token secret.
 
-### Binary
-
-You can also download pre-compiled go binaries from the [Astronomer releases](https://github.com/Ullaakut/astronomer/releases/latest).
-
-For the following commands, if you don't have a `$GOPATH`, feel free to replace the path of destination with what works best for you. (For example, `/usr/local/bin`)
-
-There are no dependencies, since astronomer comes as a statically built binary.
-
 ## Arguments and options
 
 * It is required to specify a repository in the form `repositoryOwner/repositoryName`. This argument's position does not matter.
@@ -70,16 +62,6 @@ Repositories with high amounts of stars, especially when they arrive in bursts, 
 > _How accurate is this algorithm? Why does my repository have a low trust level?_
 
 Astronomer only attempts to estimate a trust level. A low score could be indicative of a community of casual GitHub users, or a repisitory with a low amount of stars resulting in low precisions.
-
-<br/>
-
-> _How can I add an Astronomer badge to my repository?_
-
-Once you run an Astronomer scan on your machine, your trust report is automatically sent to the Astronomer server. Then, a link to your badge should be visible in Astronomer's output. Once you have it, you can add it to your repository by simply adding this line to your repository's `README.md` file:
-
-`[![Astronomer Rating](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3D<REPOSITORY_OWNER>%26name%3D<REPOSITORY_NAME>)](https://github.com/ullaakut/astronomer)`
-
-Make sure to replace `<REPOSITORY_OWNER>` and `<REPOSITORY_NAME>` with the correct values for your repository. For example, for astronomer, the URL would be `https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fastronomer.ullaakut.eu%2Fshields%3Fowner%3Dullaakut%26name%3Dastronomer`.
 
 <br/>
 
@@ -115,13 +97,3 @@ Of course, if you have any suggestion of features or improvements you would like
 Thanks to the authors of [spencerkimball/stargazers](https://github.com/spencerkimball/stargazers) who greatly inspired the early design of this project 🙏
 
 The original Go gopher was designed by [Renee French](http://reneefrench.blogspot.com).
-
-## License
-
-Copyright 2019 Ullaakut
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
