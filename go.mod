@@ -3,7 +3,6 @@ module github.com/stn1slv/astronomer
 go 1.19
 
 require (
-	github.com/Ullaakut/astronomer v1.1.3
 	github.com/Ullaakut/disgo v0.3.1
 	github.com/cenkalti/backoff/v3 v3.2.2
 	github.com/kennygrant/sanitize v1.2.4
