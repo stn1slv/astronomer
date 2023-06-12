@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Ullaakut/astronomer/pkg/context"
-	"github.com/Ullaakut/astronomer/pkg/trust"
 	"github.com/Ullaakut/disgo"
+	"github.com/stn1slv/astronomer/pkg/context"
+	"github.com/stn1slv/astronomer/pkg/trust"
 )
 
 // SignedReport represents a report that has been signed

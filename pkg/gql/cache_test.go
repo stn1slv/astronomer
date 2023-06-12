@@ -3,8 +3,8 @@ package gql
 import (
 	"testing"
 
+	"github.com/stn1slv/astronomer/pkg/context"
 	"github.com/stretchr/testify/assert"
-	"github.com/Ullaakut/astronomer/pkg/context"
 )
 
 func TestCacheEntryFilename(t *testing.T) {

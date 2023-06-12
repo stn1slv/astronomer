@@ -6,14 +6,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
-	"github.com/Ullaakut/astronomer/pkg/context"
-	"github.com/Ullaakut/astronomer/pkg/gql"
-	"github.com/Ullaakut/astronomer/pkg/signature"
-	"github.com/Ullaakut/astronomer/pkg/trust"
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
+	"github.com/stn1slv/astronomer/pkg/context"
+	"github.com/stn1slv/astronomer/pkg/gql"
+	"github.com/stn1slv/astronomer/pkg/signature"
+	"github.com/stn1slv/astronomer/pkg/trust"
 )
 
 func parseArguments() error {

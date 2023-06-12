@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Ullaakut/astronomer/pkg/context"
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/cenkalti/backoff/v3"
+	"github.com/stn1slv/astronomer/pkg/context"
 	"github.com/vbauerster/mpb/v4"
 	"github.com/vbauerster/mpb/v4/decor"
 )

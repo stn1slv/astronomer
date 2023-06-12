@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Ullaakut/astronomer/pkg/context"
-	"github.com/Ullaakut/astronomer/pkg/gql"
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/montanaflynn/stats"
+	"github.com/stn1slv/astronomer/pkg/context"
+	"github.com/stn1slv/astronomer/pkg/gql"
 )
 
 // Factor represents one of the trust factors used to compte
