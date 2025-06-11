@@ -2,6 +2,7 @@ package gql
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 )
 
 const year = 24 * time.Hour * 365
+const defaultTimeout = 30 * time.Second
 
 var (
 	rateLimitSleepDuration time.Duration
@@ -55,7 +57,7 @@ func FetchStargazers(ctx *context.Context) (cursors []string, totalUsers uint, e
 
 	// Inject constants in request body.
 	requestBody := buildRequestBody(ctx, fetchUsersRequest, listPagination)
-	client := &http.Client{}
+	client := &http.Client{Timeout: defaultTimeout}
 
 	disgo.StartStep("Pre-fetching all stargazers")
 
@@ -75,7 +77,7 @@ func FetchStargazers(ctx *context.Context) (cursors []string, totalUsers uint, e
 				1)
 		}
 
-		req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(paginatedRequestBody)))
+		req, err := http.NewRequestWithContext(stdcontext.Background(), "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(paginatedRequestBody)))
 		if err != nil {
 			return nil, 0, disgo.FailStepf("unable to prepare request: %v", err)
 		}
@@ -188,7 +190,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 	)
 
 	requestBody := buildRequestBody(ctx, fetchContributionsRequest, contribPagination)
-	client := &http.Client{}
+	client := &http.Client{Timeout: defaultTimeout}
 
 	progress, bar := setupProgressBar(len(cursors))
 	defer progress.Wait()
@@ -233,7 +235,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 			yearlyRequestBody = strings.Replace(yearlyRequestBody, "$dateTo", to.Format(iso8601Format), 1)
 
 			// Prepare the HTTP request.
-			req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
+			req, err := http.NewRequestWithContext(stdcontext.Background(), "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
 			if err != nil {
 				return nil, fmt.Errorf("unable to prepare request: %v", err)
 			}
@@ -425,12 +427,18 @@ func getCursors(ctx *context.Context, sg []stargazers, totalUsers uint) []string
 // Pick random strings picks ${amount} random strings from the
 // given slice of strings, except those that were already picked.
 func pickRandomStringsExcept(s []string, picked []string, amount uint) []string {
+	return pickRandomExcept(s, picked, amount)
+}
+
+// pickRandomExcept picks `amount` random elements from the
+// given slice except those that were already picked.
+func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
 	// Make the random non-deterministic.
 	seed := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(seed)
 
 	for i := uint(1); i < amount; i++ {
-		// Pick a string.
+		// Pick an element.
 		newPick := s[random.Intn(len(s)-1)]
 
 		// Check if it has already been selected.
@@ -438,6 +446,7 @@ func pickRandomStringsExcept(s []string, picked []string, amount uint) []string 
 		for _, alreadyPicked := range picked {
 			if newPick == alreadyPicked {
 				found = true
+				break
 			}
 		}
 
