@@ -1,15 +1,12 @@
 package signature
 
 import (
-	"bytes"
 	"crypto"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 )
 
@@ -23,23 +20,24 @@ func Check(report *SignedReport) error {
 
 	hashedReport := sha512.Sum512(data)
 
-	keyBlock, _ := pem.Decode([]byte(pemData))
+	keyBlock, _ := pem.Decode([]byte(publicKeyPemData))
 	if keyBlock == nil {
-		return fmt.Errorf("unable to decode private key")
+		return fmt.Errorf("unable to decode public key")
 	}
 
-	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	key, err := x509.ParsePKIXPublicKey(keyBlock.Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to parse private key: %v", err)
+		return fmt.Errorf("unable to parse public key: %v", err)
 	}
 
-	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA512, hashedReport[:])
+	rsaKey, ok := key.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("not an RSA public key")
+	}
+
+	err = rsa.VerifyPKCS1v15(rsaKey, crypto.SHA512, hashedReport[:], report.Signature)
 	if err != nil {
-		return fmt.Errorf("unable to sign trust report: %v", err)
-	}
-
-	if !bytes.Equal(signature, report.Signature) {
-		return errors.New("signature doesn't match")
+		return fmt.Errorf("signature verification failed: %v", err)
 	}
 
 	return nil
