@@ -3,7 +3,7 @@ package gql
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -38,13 +38,13 @@ func getCache(ctx *context.Context, req *http.Request, pagination string) (*http
 }
 
 func readCachedResponse(filename string, req *http.Request) (*http.Response, error) {
-	body, err := ioutil.ReadFile(filename)
+	body, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
 
 	return &http.Response{
-		Body: ioutil.NopCloser(bytes.NewReader(body)),
+		Body: io.NopCloser(bytes.NewReader(body)),
 	}, nil
 }
 

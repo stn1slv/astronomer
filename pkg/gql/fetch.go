@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Ullaakut/disgo"
@@ -18,6 +19,7 @@ import (
 	"github.com/stn1slv/astronomer/pkg/context"
 	"github.com/vbauerster/mpb/v4"
 	"github.com/vbauerster/mpb/v4/decor"
+	"golang.org/x/sync/errgroup"
 )
 
 const year = 24 * time.Hour * 365
@@ -185,8 +187,8 @@ func FetchStargazers(ctx *context.Context) (cursors []string, totalUsers uint, e
 // untilYear is the year until which to scan for contribuitons.
 func FetchContributions(ctx *context.Context, cursors []string, untilYear int) ([]User, error) {
 	var (
-		users          []User
-		rateLimitSleep time.Duration
+		users []User
+		mu    sync.Mutex
 	)
 
 	requestBody := buildRequestBody(ctx, fetchContributionsRequest, contribPagination)
@@ -208,130 +210,135 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 		totalPages++
 	}
 
+	g, _ := errgroup.WithContext(stdcontext.Background())
+
 	// Iterate on pages of user contributions, following the cursors generated
 	// in fetchStargazers.
 	for page := 1; page <= totalPages; page++ {
+		page := page
 		currentCursor := getCursor(cursors, page, isReverseOrder)
 
-		// If this isn't the first page, inject the cursor value.
-		paginatedRequestBody := requestBody
-		if currentCursor != "firstpage" {
-			paginatedRequestBody = strings.Replace(
-				paginatedRequestBody,
-				fmt.Sprintf("stargazers(first:%d){", contribPagination),
-				fmt.Sprintf("stargazers(first:%d,after:\\\"%s\\\"){", contribPagination, currentCursor),
-				1,
-			)
-		}
-
-		// Get all user contributions for each year.
-		currentYear := time.Now().Year()
-		for i := 0; currentYear-i > untilYear-1; i++ {
-			// Inject the dates corresponding to the year we're scanning, into the request body.
-			from := time.Date(currentYear-i, time.January, 1, 0, 0, 0, 0, time.UTC)
-			to := from.Add(year - 1*time.Second)
-
-			yearlyRequestBody := strings.Replace(paginatedRequestBody, "$dateFrom", from.Format(iso8601Format), 1)
-			yearlyRequestBody = strings.Replace(yearlyRequestBody, "$dateTo", to.Format(iso8601Format), 1)
-
-			// Prepare the HTTP request.
-			req, err := http.NewRequestWithContext(stdcontext.Background(), "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
-			if err != nil {
-				return nil, fmt.Errorf("unable to prepare request: %v", err)
-			}
-
-			// Inject GitHub token for API authorization.
-			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ctx.GithubToken))
-			req.Header.Set("User-Agent", "Astronomer")
-
-			// Try to get a cached response to this request.
-			resp, err := getCache(ctx, req, contribFilePagination(currentCursor, currentYear-i))
-			if err != nil {
-				return nil, fmt.Errorf("unable to get cached file: %v", err)
-			}
-
-			response, responseBody, _ := parseResponse(resp)
-
-			cachedFileFound := resp != nil
-
-			// If the request was not found in the cache, try to fetch it until it works
-			// or until the limit of 20 attempts is reached.
-			if !cachedFileFound {
-				var attempts int
-				err = backoff.Retry(func() error {
-					// If we reached 20 attempts, give up.
-					attempts++
-					if attempts >= 20 {
-						disgo.Errorln("Failed to fetch user contributions from GitHub API too many times.")
-						return nil
-					}
-
-					// If rate limit was reached, sleep before making a request.
-					// If rate limit was not reached, rateLimitSleep will be set to zero.
-					time.Sleep(rateLimitSleep)
-
-					resp, err = client.Do(req)
-					if err != nil {
-						return fmt.Errorf("unable to fetch stargazer contributions: %v", err)
-					}
-
-					if resp == nil {
-						return errors.New("nil response")
-					}
-
-					response, responseBody, err = parseResponse(resp)
-					if err != nil {
-						return fmt.Errorf("unable to parse response: %v", err)
-					}
-
-					if len(response.Errors) != 0 || response.ErrorMessage != "" {
-						if response.ErrorMessage != "" {
-							return errors.New(response.ErrorMessage)
-						}
-						return errors.New(response.Errors[0].Message)
-					}
-
-					// If there is no error and no users in the response body, it must mean
-					// that we reached the end of the user list.
-					if len(response.Repository.Stargazers.Users) == 0 {
-						resp.Body.Close()
-						return nil
-					}
-
-					return nil
-				}, backoff.NewConstantBackOff(15*time.Second))
-			}
-
-			if response == nil || err != nil {
-				return nil, fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
-			}
-
-			// Update list of users with users from reponse.
-			users = updateUsers(users, *response, currentYear-i)
-
-			if len(response.Errors) != 0 || response.ErrorMessage != "" {
-				disgo.Errorln("Errors:", response.ErrorMessage, response.Errors)
-				return nil, fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
-			}
-
-			// If file was fetched, write it in the cache. If we already got it from the cache,
-			// no need to rewrite it.
-			if !cachedFileFound {
-				err = putCache(ctx, req, contribFilePagination(currentCursor, currentYear-i), responseBody)
-				if err != nil {
-					return users, fmt.Errorf("unable to write user contribution data to cache: %v", err)
+		g.Go(func() error {
+			// Get all user contributions for each year.
+			currentYear := time.Now().Year()
+			for i := 0; currentYear-i > untilYear-1; i++ {
+				// If this isn't the first page, inject the cursor value.
+				paginatedRequestBody := requestBody
+				if currentCursor != "firstpage" {
+					paginatedRequestBody = strings.Replace(
+						paginatedRequestBody,
+						fmt.Sprintf("stargazers(first:%d){", contribPagination),
+						fmt.Sprintf("stargazers(first:%d,after:\\\"%s\\\"){", contribPagination, currentCursor),
+						1,
+					)
 				}
-			}
 
-			// If we approach the rate limit, slow the requests down.
-			if response.RateLimit.Remaining <= 10 {
-				disgo.Infoln("Rate limit reached, slowing down requests")
-				rateLimitSleep = rateLimitSleepDuration
-			}
+				// Inject the dates corresponding to the year we're scanning, into the request body.
+				from := time.Date(currentYear-i, time.January, 1, 0, 0, 0, 0, time.UTC)
+				to := from.Add(year - 1*time.Second)
 
-			// Update progress bar.
-			bar.IncrBy(contribPagination / (currentYear - untilYear))
-		}
+				yearlyRequestBody := strings.Replace(paginatedRequestBody, "$dateFrom", from.Format(iso8601Format), 1)
+				yearlyRequestBody = strings.Replace(yearlyRequestBody, "$dateTo", to.Format(iso8601Format), 1)
+
+				// Prepare the HTTP request.
+				req, err := http.NewRequestWithContext(stdcontext.Background(), "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
+				if err != nil {
+					return fmt.Errorf("unable to prepare request: %v", err)
+				}
+
+				// Inject GitHub token for API authorization.
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ctx.GithubToken))
+				req.Header.Set("User-Agent", "Astronomer")
+
+				// Try to get a cached response to this request.
+				resp, err := getCache(ctx, req, contribFilePagination(currentCursor, currentYear-i))
+				if err != nil {
+					return fmt.Errorf("unable to get cached file: %v", err)
+				}
+
+				response, responseBody, _ := parseResponse(resp)
+
+				cachedFileFound := resp != nil
+
+				// If the request was not found in the cache, try to fetch it until it works
+				// or until the limit of 20 attempts is reached.
+				if !cachedFileFound {
+					var attempts int
+					err = backoff.Retry(func() error {
+						// If we reached 20 attempts, give up.
+						attempts++
+						if attempts >= 20 {
+							disgo.Errorln("Failed to fetch user contributions from GitHub API too many times.")
+							return nil
+						}
+
+						resp, err = client.Do(req)
+						if err != nil {
+							return fmt.Errorf("unable to fetch stargazer contributions: %v", err)
+						}
+
+						if resp == nil {
+							return errors.New("nil response")
+						}
+
+						response, responseBody, err = parseResponse(resp)
+						if err != nil {
+							return fmt.Errorf("unable to parse response: %v", err)
+						}
+
+						if len(response.Errors) != 0 || response.ErrorMessage != "" {
+							if response.ErrorMessage != "" {
+								return errors.New(response.ErrorMessage)
+							}
+							return errors.New(response.Errors[0].Message)
+						}
+
+						// If there is no error and no users in the response body, it must mean
+						// that we reached the end of the user list.
+						if len(response.Repository.Stargazers.Users) == 0 {
+							resp.Body.Close()
+							return nil
+						}
+
+						return nil
+					}, backoff.NewConstantBackOff(15*time.Second))
+				}
+
+				if response == nil || err != nil {
+					return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
+				}
+
+				// Update list of users with users from reponse.
+				mu.Lock()
+				users = updateUsers(users, *response, currentYear-i)
+				mu.Unlock()
+
+				if len(response.Errors) != 0 || response.ErrorMessage != "" {
+					disgo.Errorln("Errors:", response.ErrorMessage, response.Errors)
+					return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
+				}
+
+				// If file was fetched, write it in the cache. If we already got it from the cache,
+				// no need to rewrite it.
+				if !cachedFileFound {
+					err = putCache(ctx, req, contribFilePagination(currentCursor, currentYear-i), responseBody)
+					if err != nil {
+						mu.Lock()
+						usersResult := users
+						mu.Unlock()
+						return fmt.Errorf("unable to write user contribution data to cache: %v (users so far: %d)", err, len(usersResult))
+					}
+				}
+
+				// Update progress bar.
+				bar.IncrBy(contribPagination / (currentYear - untilYear))
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	bar.Abort(true)
@@ -518,7 +525,7 @@ func parseResponse(resp *http.Response) (*listStargazersResponse, []byte, error)
 		return nil, nil, errors.New("unable to parse nil response")
 	}
 
-	responseBody, err := ioutil.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		resp.Body.Close()
 		return nil, nil, fmt.Errorf("unable to read response body: %v", err)
