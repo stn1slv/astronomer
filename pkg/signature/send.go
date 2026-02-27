@@ -51,9 +51,9 @@ func signReport(report *trust.Report) ([]byte, error) {
 
 	hashedReport := sha512.Sum512(data)
 
-	keyBlock, rest := pem.Decode([]byte(pemData))
+	keyBlock, rest := pem.Decode([]byte(privateKeyPemData))
 	if len(rest) != 0 {
-		return nil, fmt.Errorf("unable to decode private key: %s", pemData)
+		return nil, fmt.Errorf("unable to decode private key: %s", privateKeyPemData)
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
@@ -89,4 +89,5 @@ func sendReport(report SignedReport) error {
 	return nil
 }
 
-var pemData = `👀`
+var privateKeyPemData = `👀`
+var publicKeyPemData = `👀`

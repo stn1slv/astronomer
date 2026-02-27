@@ -41,7 +41,7 @@ Trust is computed based on several factors:
 ### Installation
 
 ```bash
-git clone https://github.com/ullaakut/astronomer.git
+git clone https://github.com/stn1slv/astronomer.git
 cd astronomer
 make build
 ```

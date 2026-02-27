@@ -210,12 +210,12 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 		totalPages++
 	}
 
-	g, _ := errgroup.WithContext(stdcontext.Background())
+	g, gCtx := errgroup.WithContext(stdcontext.Background())
+	g.SetLimit(10)
 
 	// Iterate on pages of user contributions, following the cursors generated
 	// in fetchStargazers.
 	for page := 1; page <= totalPages; page++ {
-		page := page
 		currentCursor := getCursor(cursors, page, isReverseOrder)
 
 		g.Go(func() error {
@@ -240,9 +240,12 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 				yearlyRequestBody := strings.Replace(paginatedRequestBody, "$dateFrom", from.Format(iso8601Format), 1)
 				yearlyRequestBody = strings.Replace(yearlyRequestBody, "$dateTo", to.Format(iso8601Format), 1)
 
-				// Prepare the HTTP request.
-				req, err := http.NewRequestWithContext(stdcontext.Background(), "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
+				// Prepare the HTTP request with a timeout-bound context derived from the group context.
+				reqCtx, cancel := stdcontext.WithTimeout(gCtx, defaultTimeout)
+
+				req, err := http.NewRequestWithContext(reqCtx, "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
 				if err != nil {
+					cancel()
 					return fmt.Errorf("unable to prepare request: %v", err)
 				}
 
@@ -253,6 +256,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 				// Try to get a cached response to this request.
 				resp, err := getCache(ctx, req, contribFilePagination(currentCursor, currentYear-i))
 				if err != nil {
+					cancel()
 					return fmt.Errorf("unable to get cached file: %v", err)
 				}
 
@@ -271,6 +275,10 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 							disgo.Errorln("Failed to fetch user contributions from GitHub API too many times.")
 							return nil
 						}
+
+						// If rate limit was reached, sleep before making a request.
+						// If rate limit was not reached, rateLimitSleepDuration will be set to zero.
+						time.Sleep(rateLimitSleepDuration)
 
 						resp, err = client.Do(req)
 						if err != nil {
@@ -300,9 +308,18 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 							return nil
 						}
 
+						// Update the rate limit sleep duration depending on the token's limit.
+						if response.RateLimit.Limit > 0 {
+							mu.Lock()
+							rateLimitSleepDuration = time.Hour / time.Duration(response.RateLimit.Limit)
+							mu.Unlock()
+						}
+
 						return nil
 					}, backoff.NewConstantBackOff(15*time.Second))
 				}
+
+				cancel()
 
 				if response == nil || err != nil {
 					return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
