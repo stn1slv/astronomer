@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/Ullaakut/disgo"
 	"github.com/stn1slv/astronomer/pkg/context"
@@ -51,9 +52,14 @@ func signReport(report *trust.Report) ([]byte, error) {
 
 	hashedReport := sha512.Sum512(data)
 
-	keyBlock, rest := pem.Decode([]byte(privateKeyPemData))
-	if len(rest) != 0 {
-		return nil, fmt.Errorf("unable to decode private key: %s", privateKeyPemData)
+	pemKey := os.Getenv("ASTRONOMER_PRIVATE_KEY")
+	if pemKey == "" {
+		pemKey = privateKeyPemData
+	}
+
+	keyBlock, _ := pem.Decode([]byte(pemKey))
+	if keyBlock == nil {
+		return nil, fmt.Errorf("unable to decode private key")
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)

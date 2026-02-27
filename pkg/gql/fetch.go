@@ -210,7 +210,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 		totalPages++
 	}
 
-	g, gCtx := errgroup.WithContext(stdcontext.Background())
+	g, gCtx := errgroup.WithContext(stdcontext.TODO())
 	g.SetLimit(10)
 
 	// Iterate on pages of user contributions, following the cursors generated
@@ -243,10 +243,10 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 
 				// Prepare the HTTP request with a timeout-bound context derived from the group context.
 				reqCtx, cancel := stdcontext.WithTimeout(gCtx, defaultTimeout)
-				defer cancel()
 
 				req, err := http.NewRequestWithContext(reqCtx, "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
 				if err != nil {
+					cancel()
 					return fmt.Errorf("unable to prepare request: %v", err)
 				}
 
@@ -257,6 +257,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 				// Try to get a cached response to this request.
 				resp, err := getCache(ctx, req, contribFilePagination(currentCursor, currentYear-i))
 				if err != nil {
+					cancel()
 					return fmt.Errorf("unable to get cached file: %v", err)
 				}
 
@@ -278,7 +279,12 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 
 						// If rate limit was reached, sleep before making a request.
 						// If rate limit was not reached, rateLimitSleepDuration will be set to zero.
-						time.Sleep(rateLimitSleepDuration)
+						mu.Lock()
+						sleepDuration := rateLimitSleepDuration
+						mu.Unlock()
+						if sleepDuration > 0 {
+							time.Sleep(sleepDuration)
+						}
 
 						resp, err = client.Do(req)
 						if err != nil {
@@ -318,6 +324,8 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 						return nil
 					}, backoff.NewConstantBackOff(15*time.Second))
 				}
+
+				cancel()
 
 				if response == nil || err != nil {
 					return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
