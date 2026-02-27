@@ -220,6 +220,7 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 
 		g.Go(func() error {
 			// Get all user contributions for each year.
+			currentCursor := currentCursor // Capture currentCursor for closure.
 			currentYear := time.Now().Year()
 			for i := 0; currentYear-i > untilYear-1; i++ {
 				// If this isn't the first page, inject the cursor value.
@@ -242,10 +243,10 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 
 				// Prepare the HTTP request with a timeout-bound context derived from the group context.
 				reqCtx, cancel := stdcontext.WithTimeout(gCtx, defaultTimeout)
+				defer cancel()
 
 				req, err := http.NewRequestWithContext(reqCtx, "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
 				if err != nil {
-					cancel()
 					return fmt.Errorf("unable to prepare request: %v", err)
 				}
 
@@ -256,7 +257,6 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 				// Try to get a cached response to this request.
 				resp, err := getCache(ctx, req, contribFilePagination(currentCursor, currentYear-i))
 				if err != nil {
-					cancel()
 					return fmt.Errorf("unable to get cached file: %v", err)
 				}
 
@@ -319,13 +319,11 @@ func FetchContributions(ctx *context.Context, cursors []string, untilYear int) (
 					}, backoff.NewConstantBackOff(15*time.Second))
 				}
 
-				cancel()
-
 				if response == nil || err != nil {
 					return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
 				}
 
-				// Update list of users with users from reponse.
+				// Update list of users with users from response.
 				mu.Lock()
 				users = updateUsers(users, *response, currentYear-i)
 				mu.Unlock()
