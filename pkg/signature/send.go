@@ -2,6 +2,7 @@ package signature
 
 import (
 	"bytes"
+	stdcontext "context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -14,7 +15,7 @@ import (
 	"os"
 
 	"github.com/Ullaakut/disgo"
-	"github.com/stn1slv/astronomer/pkg/context"
+	astronomer_context "github.com/stn1slv/astronomer/pkg/context"
 	"github.com/stn1slv/astronomer/pkg/trust"
 )
 
@@ -30,16 +31,16 @@ type SignedReport struct {
 }
 
 // SendReport signs a report and sends it to Astrolab.
-func SendReport(ctx *context.Context, report *trust.Report) error {
+func SendReport(ctx stdcontext.Context, astronomerCtx *astronomer_context.Context, report *trust.Report) error {
 	signature, err := signReport(report)
 	if err != nil {
 		return err
 	}
 
-	return sendReport(SignedReport{
+	return sendReport(ctx, SignedReport{
 		Report:          report,
-		RepositoryOwner: ctx.RepoOwner,
-		RepositoryName:  ctx.RepoName,
+		RepositoryOwner: astronomerCtx.RepoOwner,
+		RepositoryName:  astronomerCtx.RepoName,
 		Signature:       signature,
 	})
 }
@@ -47,7 +48,7 @@ func SendReport(ctx *context.Context, report *trust.Report) error {
 func signReport(report *trust.Report) ([]byte, error) {
 	data, err := json.Marshal(report)
 	if err != nil {
-		return nil, fmt.Errorf("unable to marshal trust report: %v", err)
+		return nil, fmt.Errorf("unable to marshal trust report: %w", err)
 	}
 
 	hashedReport := sha512.Sum512(data)
@@ -64,27 +65,35 @@ func signReport(report *trust.Report) ([]byte, error) {
 
 	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse private key: %v", err)
+		return nil, fmt.Errorf("unable to parse private key: %w", err)
 	}
 
 	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA512, hashedReport[:])
 	if err != nil {
-		return nil, fmt.Errorf("unable to sign trust report: %v", err)
+		return nil, fmt.Errorf("unable to sign trust report: %w", err)
 	}
 
 	return signature, nil
 }
 
-func sendReport(report SignedReport) error {
+func sendReport(ctx stdcontext.Context, report SignedReport) error {
 	data, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("unable to marshal signed report: %v", err)
+		return fmt.Errorf("unable to marshal signed report: %w", err)
 	}
 
-	response, err := http.Post("https://astronomer.ullaakut.eu", "application/json", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://astronomer.ullaakut.eu", bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("unable to send signed report to astronomer server: %v", err)
+		return fmt.Errorf("unable to prepare request to astronomer server: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("unable to send signed report to astronomer server: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != 201 {
 		return fmt.Errorf("astronomer server did not trust this report: %v", response.Status)

@@ -1,3 +1,4 @@
+// Package signature provides functions to sign and verify trust reports.
 package signature
 
 import (
@@ -15,7 +16,7 @@ import (
 func Check(report *SignedReport) error {
 	data, err := json.Marshal(report.Report)
 	if err != nil {
-		return fmt.Errorf("unable to marshal trust report: %v", err)
+		return fmt.Errorf("unable to marshal trust report: %w", err)
 	}
 
 	hashedReport := sha512.Sum512(data)
@@ -27,7 +28,7 @@ func Check(report *SignedReport) error {
 
 	key, err := x509.ParsePKIXPublicKey(keyBlock.Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to parse public key: %v", err)
+		return fmt.Errorf("unable to parse public key: %w", err)
 	}
 
 	rsaKey, ok := key.(*rsa.PublicKey)
@@ -37,7 +38,7 @@ func Check(report *SignedReport) error {
 
 	err = rsa.VerifyPKCS1v15(rsaKey, crypto.SHA512, hashedReport[:], report.Signature)
 	if err != nil {
-		return fmt.Errorf("signature verification failed: %v", err)
+		return fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	return nil

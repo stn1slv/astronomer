@@ -15,7 +15,7 @@ setup:
 .PHONY: test
 test:
 	@echo "Running tests..."
-	go test -v ./...
+	go test -race -v ./...
 
 .PHONY: lint
 lint:
@@ -29,7 +29,11 @@ lint:
 .PHONY: format
 format:
 	@echo "Formatting code..."
-	go fmt ./...
+	@if command -v gofumpt > /dev/null; then \
+		gofumpt -extra -w .; \
+	else \
+		go fmt ./...; \
+	fi
 
 .PHONY: build
 build:

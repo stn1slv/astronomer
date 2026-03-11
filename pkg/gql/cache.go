@@ -1,3 +1,4 @@
+// Package gql provides functions to fetch data from the GitHub GraphQL API.
 package gql
 
 import (
@@ -26,7 +27,7 @@ func getCache(ctx *context.Context, req *http.Request, pagination string) (*http
 		return nil, err
 	}
 
-	resp, err := readCachedResponse(filename, req)
+	resp, err := readCachedResponse(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -37,8 +38,8 @@ func getCache(ctx *context.Context, req *http.Request, pagination string) (*http
 	return resp, nil
 }
 
-func readCachedResponse(filename string, req *http.Request) (*http.Response, error) {
-	body, err := os.ReadFile(filename)
+func readCachedResponse(filename string) (*http.Response, error) {
+	body, err := os.ReadFile(filename) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
@@ -51,21 +52,22 @@ func readCachedResponse(filename string, req *http.Request) (*http.Response, err
 // putCache puts the supplied http.Response into the cache.
 func putCache(ctx *context.Context, req *http.Request, pagination string, body []byte) error {
 	filename := cacheEntryFilename(ctx, req.URL.String()+pagination)
-	f, err := os.Create(filename)
+	f, err := os.Create(filename) // #nosec G304
 	if err != nil {
-		return fmt.Errorf("unable to create cache file: %v", err)
+		return fmt.Errorf("unable to create cache file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = f.Write(body)
 	if err != nil {
-		return fmt.Errorf("unable to write response in cache file: %v", err)
+		return fmt.Errorf("unable to write response in cache file: %w", err)
 	}
 
-	_, err = readCachedResponse(filename, req)
+	resp, err := readCachedResponse(filename)
 	if err != nil {
 		return err
 	}
+	_ = resp.Body.Close()
 
 	return nil
 }
@@ -81,7 +83,7 @@ func cacheEntryFilename(ctx *context.Context, url string) string {
 // for stargazer lists.
 func listFilePagination(cursor string) string {
 	if cursor == "" {
-		return fmt.Sprintf("-list-firstpage")
+		return "-list-firstpage"
 	}
 
 	return fmt.Sprintf("-list-%s", cursor)

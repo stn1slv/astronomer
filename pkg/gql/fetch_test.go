@@ -36,12 +36,13 @@ func TestBuildRequestBody(t *testing.T) {
 
 	for description, test := range tests {
 		t.Run(description, func(t *testing.T) {
-			ctx := &context.Context{
+			t.Parallel()
+			astronomerCtx := &context.Context{
 				RepoOwner: test.repoOwner,
 				RepoName:  test.repoName,
 			}
 
-			requestBody := buildRequestBody(ctx, test.baseRequest, test.pagination)
+			requestBody := buildRequestBody(astronomerCtx, test.baseRequest, test.pagination)
 
 			assert.Equal(t, test.expectedBody, requestBody)
 		})
@@ -141,12 +142,13 @@ func TestGetCursors(t *testing.T) {
 
 	for description, test := range tests {
 		t.Run(description, func(t *testing.T) {
-			ctx := &context.Context{
+			t.Parallel()
+			astronomerCtx := &context.Context{
 				ScanAll: test.scanAll,
 				Stars:   test.starLimit,
 			}
 
-			cursors := getCursors(ctx, test.stargazers, test.totalUsers)
+			cursors := getCursors(astronomerCtx, test.stargazers, test.totalUsers)
 
 			assert.Equal(t, test.expectedCursors, cursors)
 		})
@@ -274,6 +276,7 @@ func TestUpdateUsers(t *testing.T) {
 
 	for description, test := range tests {
 		t.Run(description, func(t *testing.T) {
+			t.Parallel()
 			users := updateUsers(test.users, test.response, test.year)
 
 			assert.Equal(t, test.expectedUsers, users)

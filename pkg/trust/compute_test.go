@@ -111,17 +111,23 @@ func TestSplitTrustReports(t *testing.T) {
 	require.NotNil(t, randomUsers)
 
 	for _, data := range earlyUsers {
-		assert.Len(t, data, 200)
-		for _, userValue := range data {
-			assert.Equal(t, userValue, earlyUser)
-		}
+		t.Run("early users data", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, data, 200)
+			for _, userValue := range data {
+				assert.InDelta(t, userValue, earlyUser, 0.0001)
+			}
+		})
 	}
 
 	for _, data := range randomUsers {
-		assert.Len(t, data, 800)
-		for _, userValue := range data {
-			assert.Equal(t, userValue, randomUser)
-		}
+		t.Run("random users data", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, data, 800)
+			for _, userValue := range data {
+				assert.InDelta(t, userValue, randomUser, 0.0001)
+			}
+		})
 	}
 }
 

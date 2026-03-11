@@ -1,0 +1,51 @@
+version: 2
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+    - gocritic
+    - gosec
+    - bodyclose
+    - noctx
+    - errorlint
+    - prealloc
+    - unparam
+    - nilerr
+    - forcetypeassert
+    - makezero
+    - exhaustive
+    - goconst
+    - misspell
+    - testifylint
+
+linters-settings:
+  revive:
+    rules:
+      - name: context-as-first-argument
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: var-naming
+      - name: package-comments
+  exhaustive:
+    default-signifies-exhaustive: true
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  testifylint:
+    enable-all: true
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

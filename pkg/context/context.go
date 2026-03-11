@@ -1,3 +1,4 @@
+// Package context provides a shared context for the astronomer application.
 package context
 
 // Context represents the context of an Astronomer scan.

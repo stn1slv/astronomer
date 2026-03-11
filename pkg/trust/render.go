@@ -16,6 +16,7 @@ const (
 	// Average score:                       12778            68%
 	factorsFormat = "%s:<TAB>%s<TAB>%s\n"
 
+	// OverallTrustFormat is the format used to print the overall trust result.
 	// > Overall trust:                                      76%
 	OverallTrustFormat = "%s\n%s:<TAB>%s\n"
 
@@ -66,7 +67,7 @@ func printHeader(info bool) {
 		"Trust",
 	}
 
-	var underlines []string
+	underlines := make([]string, 0, len(headerNames))
 	for _, headerName := range headerNames {
 		underlines = append(underlines, generateUnderlineFromHeader(headerName))
 	}
@@ -93,11 +94,12 @@ func printFactor(info bool, factorName string, factor Factor) {
 
 	grade := percentToLetterGrade(factor.TrustPercent)
 
-	if factor.TrustPercent < 0.4 {
+	switch {
+	case factor.TrustPercent < 0.4:
 		printf(info, format, factorName, style.Failure(fmt.Sprintf("%1.f", factor.Value)), style.Failure(grade))
-	} else if factor.TrustPercent < 0.6 {
+	case factor.TrustPercent < 0.6:
 		printf(info, format, factorName, style.Important(fmt.Sprintf("%1.f", factor.Value)), style.Important(grade))
-	} else {
+	default:
 		printf(info, format, factorName, style.Success(fmt.Sprintf("%1.f", factor.Value)), style.Success(grade))
 	}
 }
@@ -118,11 +120,12 @@ func printResult(info bool, factorName string, factor Factor) {
 
 	grade := percentToLetterGrade(factor.TrustPercent)
 
-	if factor.TrustPercent < 0.4 {
+	switch {
+	case factor.TrustPercent < 0.4:
 		printf(info, format, underline, factorName, style.Failure(grade))
-	} else if factor.TrustPercent < 0.6 {
+	case factor.TrustPercent < 0.6:
 		printf(info, format, underline, factorName, style.Important(grade))
-	} else {
+	default:
 		printf(info, format, underline, factorName, style.Success(grade))
 	}
 }

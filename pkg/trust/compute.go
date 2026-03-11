@@ -1,15 +1,16 @@
+// Package trust provides functions to compute the trust score of a repository.
 package trust
 
 import (
+	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/montanaflynn/stats"
-	"github.com/stn1slv/astronomer/pkg/context"
+	astronomer_context "github.com/stn1slv/astronomer/pkg/context"
 	"github.com/stn1slv/astronomer/pkg/gql"
 )
 
@@ -42,7 +43,7 @@ type Report struct {
 }
 
 // Compute computes all trust factors for the stargazers of a repository.
-func Compute(ctx *context.Context, users []gql.User) (*Report, error) {
+func Compute(_ context.Context, _ *astronomer_context.Context, users []gql.User) (*Report, error) {
 	trustData := make(map[FactorName][]float64)
 	now := time.Now().Year()
 
@@ -53,7 +54,7 @@ func Compute(ctx *context.Context, users []gql.User) (*Report, error) {
 			contributionAge := float64((now - year) + 1)
 
 			// Consider contributions more trustworthy if they are older.
-			contributionScore += float64(contributions) * math.Pow(contributionAge, 2)
+			contributionScore += float64(contributions) * (contributionAge * contributionAge)
 		}
 
 		// Gather all contribution data and account ages.
@@ -106,7 +107,7 @@ func buildReport(trustData map[FactorName][]float64) (*Report, error) {
 
 			value, err := stats.Percentile(trustData[ContributionScoreFactor], pctl)
 			if err != nil {
-				return nil, fmt.Errorf("unable to compute score trust %sth percentile: %v", percentile, err)
+				return nil, fmt.Errorf("unable to compute score trust %sth percentile: %w", percentile, err)
 			}
 
 			report.Percentiles[percentile] = Factor{

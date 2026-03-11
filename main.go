@@ -1,16 +1,20 @@
+// Package main is the entry point for the astronomer CLI tool.
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/stn1slv/astronomer/pkg/context"
+	astronomer_context "github.com/stn1slv/astronomer/pkg/context"
 	"github.com/stn1slv/astronomer/pkg/gql"
 	"github.com/stn1slv/astronomer/pkg/signature"
 	"github.com/stn1slv/astronomer/pkg/trust"
@@ -52,6 +56,10 @@ func main() {
 
 	disgo.SetTerminalOptions(disgo.WithColors(true), disgo.WithDebug(viper.GetBool("verbose")))
 
+	// Handle OS signals for graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	repository := pflag.Arg(0)
 
 	// Split repository into repo owner & repo name.
@@ -67,7 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := &context.Context{
+	astronomerCtx := &astronomer_context.Context{
 		RepoOwner:          repoInfo[0],
 		RepoName:           repoInfo[1],
 		GithubToken:        token,
@@ -77,18 +85,18 @@ func main() {
 		Verbose:            viper.GetBool("verbose"),
 	}
 
-	if err := detectFakeStars(ctx); err != nil {
+	if err := detectFakeStars(ctx, astronomerCtx); err != nil {
 		disgo.Errorln(style.Failure(style.SymbolCross, " ", err))
 		os.Exit(1)
 	}
 }
 
-func detectFakeStars(ctx *context.Context) error {
-	disgo.Infof("Beginning fetching process for repository %s/%s\n", ctx.RepoOwner, ctx.RepoName)
+func detectFakeStars(ctx context.Context, astronomerCtx *astronomer_context.Context) error {
+	disgo.Infof("Beginning fetching process for repository %s/%s\n", astronomerCtx.RepoOwner, astronomerCtx.RepoName)
 
-	cursors, totalUsers, err := gql.FetchStargazers(ctx)
+	cursors, totalUsers, err := gql.FetchStargazers(ctx, astronomerCtx)
 	if err != nil {
-		return fmt.Errorf("failed to query stargazer data: %s", err)
+		return fmt.Errorf("failed to query stargazer data: %w", err)
 	}
 
 	if totalUsers < 1000 {
@@ -97,32 +105,32 @@ func detectFakeStars(ctx *context.Context) error {
 
 	// For now, we only fetch contributions since 2013. It will be configurable later on
 	// once the algorithm is more accurate and more data has been fetched.
-	if !ctx.ScanAll && totalUsers > ctx.Stars {
-		disgo.Infof("Fetching contributions for %d users up to year %d\n", ctx.Stars, 2013)
+	if !astronomerCtx.ScanAll && totalUsers > astronomerCtx.Stars {
+		disgo.Infof("Fetching contributions for %d users up to year %d\n", astronomerCtx.Stars, 2013)
 	} else {
 		disgo.Infof("Fetching contributions for %d users up to year %d\n", totalUsers, 2013)
 	}
 
-	users, err := gql.FetchContributions(ctx, cursors, 2013)
+	users, err := gql.FetchContributions(ctx, astronomerCtx, cursors, 2013)
 	if err != nil {
-		return fmt.Errorf("failed to query stargazer data: %s", err)
+		return fmt.Errorf("failed to query stargazer data: %w", err)
 	}
 
-	report, err := trust.Compute(ctx, users)
+	report, err := trust.Compute(ctx, astronomerCtx, users)
 	if err != nil {
-		return fmt.Errorf("unable to compute trust report: %v", err)
+		return fmt.Errorf("unable to compute trust report: %w", err)
 	}
 
 	trust.Render(report, true)
 
-	err = signature.SendReport(ctx, report)
+	err = signature.SendReport(ctx, astronomerCtx, report)
 	if err != nil {
-		return fmt.Errorf("unable to send trust report: %v", err)
+		return fmt.Errorf("unable to send trust report: %w", err)
 	}
 
 	disgo.Infof("\n%s Analysis successful. %d users computed.\n", style.Success(style.SymbolCheck), len(users))
 
-	badgeEndpoint := url.QueryEscape(fmt.Sprintf("https://astronomer.ullaakut.eu/shields?owner=%s&name=%s", ctx.RepoOwner, ctx.RepoName))
+	badgeEndpoint := url.QueryEscape(fmt.Sprintf("https://astronomer.ullaakut.eu/shields?owner=%s&name=%s", astronomerCtx.RepoOwner, astronomerCtx.RepoName))
 
 	disgo.Infof("GitHub badge available at https://img.shields.io/endpoint.svg?url=%s\n", badgeEndpoint)
 
