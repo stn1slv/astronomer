@@ -1,4 +1,4 @@
-module github.com/stn1slv/astronomer
+module github.com/stn1slv/staraudit
 
 go 1.25.0
 

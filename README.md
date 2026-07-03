@@ -1,4 +1,4 @@
-# Astronomer
+# StarAudit
 
 <p align="center">
     <img width="300" src="img/logo.png"/>
@@ -7,7 +7,7 @@
 > [!NOTE]
 > This project is a continuation of [Ullaakut/astronomer](https://github.com/Ullaakut/astronomer), which was archived by the owner on Oct 12, 2020. This fork aims to maintain and modernize the tool for continued use.
 
-Astronomer is a high-performance tool that analyzes GitHub repository stargazers to compute the likelihood that they are real humans. Its primary goal is to **detect illegitimate GitHub stars from bot accounts**, which are often used to artificially inflate the perceived popularity of open-source projects.
+StarAudit is a high-performance tool that analyzes GitHub repository stargazers to compute the likelihood that they are real humans. Its primary goal is to **detect illegitimate GitHub stars from bot accounts**, which are often used to artificially inflate the perceived popularity of open-source projects.
 
 <p align="center">
     <img width="75%" src="img/astronomer.gif">
@@ -41,8 +41,8 @@ Trust is computed based on several factors:
 ### Installation
 
 ```bash
-git clone https://github.com/stn1slv/astronomer.git
-cd astronomer
+git clone https://github.com/stn1slv/staraudit.git
+cd staraudit
 make build
 ```
 
@@ -57,7 +57,7 @@ export GITHUB_TOKEN=your_token_here
 Run the scan:
 
 ```bash
-./astronomer ullaakut/astronomer
+./staraudit ullaakut/astronomer
 ```
 
 ## Arguments and Options
@@ -73,7 +73,7 @@ Run the scan:
 The project includes a `Makefile` to simplify common tasks:
 
 *   `make setup`: Bootstrap the project and download dependencies.
-*   `make build`: Compile the `astronomer` binary.
+*   `make build`: Compile the `staraudit` binary.
 *   `make test`: Run the full test suite.
 *   `make lint`: Run static analysis (requires `golangci-lint`).
 *   `make format`: Auto-format source code.
@@ -93,11 +93,11 @@ Repositories with high star counts often appear in GitHub Trending and newslette
 
 > _How accurate is this algorithm?_
 
-Astronomer provides an estimate. A low score might indicate a community of casual users or low precision due to a small sample size. It is meant as a diagnostic tool rather than an absolute verdict.
+StarAudit provides an estimate. A low score might indicate a community of casual users or low precision due to a small sample size. It is meant as a diagnostic tool rather than an absolute verdict.
 
 > _Why do results vary slightly between scans?_
 
-In fast mode, Astronomer scans the first 200 users and then takes random slices of the remaining stargazers. These random samples can lead to slight variations (1-3%) in the final score. Use the `--all` flag for a deterministic, comprehensive report.
+In fast mode, StarAudit scans the first 200 users and then takes random slices of the remaining stargazers. These random samples can lead to slight variations (1-3%) in the final score. Use the `--all` flag for a deterministic, comprehensive report.
 
 ## Thanks
 

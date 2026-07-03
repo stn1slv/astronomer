@@ -1,6 +1,6 @@
 package trust
 
-// All of the factors taken into account by Astronomer
+// All of the factors taken into account by StarAudit
 // and shown in the report.
 const (
 	PrivateContributionFactor  FactorName = "Private contributions"
