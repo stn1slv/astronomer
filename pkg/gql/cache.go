@@ -63,12 +63,6 @@ func putCache(ctx *context.Context, req *http.Request, pagination string, body [
 		return fmt.Errorf("unable to write response in cache file: %w", err)
 	}
 
-	resp, err := readCachedResponse(filename)
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-
 	return nil
 }
 
@@ -79,7 +73,7 @@ func cacheEntryFilename(ctx *context.Context, url string) string {
 	return filepath.Join(ctx.CacheDirectoryPath, ctx.RepoOwner, ctx.RepoName, sanitize.BaseName(newURL))
 }
 
-// listilePagination generates the pagination to append to the cache file names
+// listFilePagination generates the pagination to append to the cache file names
 // for stargazer lists.
 func listFilePagination(cursor string) string {
 	if cursor == "" {

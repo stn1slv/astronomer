@@ -25,8 +25,8 @@ func parseArguments() error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
 	pflag.BoolP("verbose", "v", false, "Show extra logs (including comparative reports)")
-	pflag.BoolP("all", "a", false, "Force astronomer to scall every stargazer of the repository (overrides --stars)")
-	pflag.UintP("stars", "s", 1000, "Maxmimum amount of stars to scan, if fast mode is enabled")
+	pflag.BoolP("all", "a", false, "Force astronomer to scan every stargazer of the repository (overrides --stars)")
+	pflag.UintP("stars", "s", 1000, "Maximum amount of stars to scan, if fast mode is enabled")
 	pflag.StringP("cachedir", "c", "./data", "Set the directory in which to store cache data")
 
 	viper.AutomaticEnv()
@@ -38,7 +38,7 @@ func parseArguments() error {
 		return err
 	}
 
-	if viper.GetBool("help") || len(pflag.Args()) == 0 {
+	if len(pflag.Args()) == 0 {
 		disgo.Infoln("Missing required repository argument")
 		pflag.Usage()
 		os.Exit(0)
@@ -123,9 +123,11 @@ func detectFakeStars(ctx context.Context, astronomerCtx *astronomer_context.Cont
 
 	trust.Render(report, true)
 
+	// Failing to send the report to the astronomer server is not fatal:
+	// the report has already been computed and rendered locally.
 	err = signature.SendReport(ctx, astronomerCtx, report)
 	if err != nil {
-		return fmt.Errorf("unable to send trust report: %w", err)
+		disgo.Errorln(style.Important("Unable to send trust report to the astronomer server: ", err))
 	}
 
 	disgo.Infof("\n%s Analysis successful. %d users computed.\n", style.Success(style.SymbolCheck), len(users))

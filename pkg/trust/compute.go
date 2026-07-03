@@ -14,7 +14,7 @@ import (
 	"github.com/stn1slv/astronomer/pkg/gql"
 )
 
-// Factor represents one of the trust factors used to compte
+// Factor represents one of the trust factors used to compute
 // the trust score for a repository.
 type Factor struct {
 	// The raw value of this factor.

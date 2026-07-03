@@ -182,7 +182,7 @@ func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cu
 
 // FetchContributions fetches the contribution data of a list of stargazers.
 // astronomerCtx contains the scanned context of the astronomer command.
-// untilYear is the year until which to scan for contribuitons.
+// untilYear is the year until which to scan for contributions.
 func FetchContributions(ctx stdcontext.Context, astronomerCtx *context.Context, cursors []string, untilYear int) ([]User, error) {
 	var (
 		users []User
@@ -460,20 +460,16 @@ func getCursors(astronomerCtx *context.Context, sg []stargazers, totalUsers uint
 		disgo.Infof("Selecting all %d remaining stargazers\n", totalUsers-200)
 		selectedCursors = append(selectedCursors, cursors[:len(cursors)-beginCursorAmount]...)
 	} else {
-		// endCursorAmount is the amount of cursors to fetch to get the random users.
-		endCursorAmount := totalCursorAmount - beginCursorAmount
-		disgo.Infof("Selecting %d random stargazers out of %d\n", (endCursorAmount-1)*contribPagination, totalUsers)
+		// endCursorAmount is the amount of cursors to fetch to get the random
+		// users. One page is subtracted because the first page of stargazers
+		// is always fetched without a cursor.
+		endCursorAmount := totalCursorAmount - beginCursorAmount - 1
+		disgo.Infof("Selecting %d random stargazers out of %d\n", endCursorAmount*contribPagination, totalUsers)
 
-		selectedCursors = pickRandomStringsExcept(cursors, selectedCursors, uint(endCursorAmount)) // #nosec G115
+		selectedCursors = pickRandomExcept(cursors, selectedCursors, uint(endCursorAmount)) // #nosec G115
 	}
 
 	return selectedCursors
-}
-
-// Pick random strings picks ${amount} random strings from the
-// given slice of strings, except those that were already picked.
-func pickRandomStringsExcept(s []string, picked []string, amount uint) []string {
-	return pickRandomExcept(s, picked, amount)
 }
 
 // pickRandomExcept picks `amount` random elements from the
@@ -482,9 +478,9 @@ func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
 	// Make the random non-deterministic.
 	random := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()))) // #nosec G404
 
-	for i := uint(1); i < amount; i++ {
+	for remaining := amount; remaining > 0; {
 		// Pick an element.
-		newPick := s[random.IntN(len(s)-1)]
+		newPick := s[random.IntN(len(s))]
 
 		// Check if it has already been selected.
 		var found bool
@@ -495,13 +491,13 @@ func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
 			}
 		}
 
-		// Regenerate another one if this index has already been selected.
+		// Regenerate another one if this element has already been selected.
 		if found {
-			i--
 			continue
 		}
 
 		picked = append(picked, newPick)
+		remaining--
 	}
 
 	return picked
