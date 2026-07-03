@@ -1,8 +1,9 @@
-// Package main is the entry point for the astronomer CLI tool.
+// Package main is the entry point for the staraudit CLI tool.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -14,19 +15,19 @@ import (
 	"github.com/Ullaakut/disgo/style"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	astronomer_context "github.com/stn1slv/astronomer/pkg/context"
-	"github.com/stn1slv/astronomer/pkg/gql"
-	"github.com/stn1slv/astronomer/pkg/signature"
-	"github.com/stn1slv/astronomer/pkg/trust"
+	staraudit_context "github.com/stn1slv/staraudit/pkg/context"
+	"github.com/stn1slv/staraudit/pkg/gql"
+	"github.com/stn1slv/staraudit/pkg/signature"
+	"github.com/stn1slv/staraudit/pkg/trust"
 )
 
 func parseArguments() error {
-	viper.SetEnvPrefix("astronomer")
+	viper.SetEnvPrefix("staraudit")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
 	pflag.BoolP("verbose", "v", false, "Show extra logs (including comparative reports)")
-	pflag.BoolP("all", "a", false, "Force astronomer to scall every stargazer of the repository (overrides --stars)")
-	pflag.UintP("stars", "s", 1000, "Maxmimum amount of stars to scan, if fast mode is enabled")
+	pflag.BoolP("all", "a", false, "Force staraudit to scan every stargazer of the repository (overrides --stars)")
+	pflag.UintP("stars", "s", 1000, "Maximum amount of stars to scan, if fast mode is enabled")
 	pflag.StringP("cachedir", "c", "./data", "Set the directory in which to store cache data")
 
 	viper.AutomaticEnv()
@@ -38,7 +39,7 @@ func parseArguments() error {
 		return err
 	}
 
-	if viper.GetBool("help") || len(pflag.Args()) == 0 {
+	if len(pflag.Args()) == 0 {
 		disgo.Infoln("Missing required repository argument")
 		pflag.Usage()
 		os.Exit(0)
@@ -48,10 +49,18 @@ func parseArguments() error {
 }
 
 func main() {
+	if err := run(); err != nil {
+		disgo.Errorln(style.Failure(style.SymbolCross, " ", err))
+		os.Exit(1)
+	}
+}
+
+// run executes the scan. It is separated from main so that deferred
+// cleanups run before the process exits with an error code.
+func run() error {
 	err := parseArguments()
 	if err != nil {
-		disgo.Errorln(style.Failure(style.SymbolCross, err))
-		os.Exit(1)
+		return err
 	}
 
 	disgo.SetTerminalOptions(disgo.WithColors(true), disgo.WithDebug(viper.GetBool("verbose")))
@@ -65,17 +74,15 @@ func main() {
 	// Split repository into repo owner & repo name.
 	repoInfo := strings.Split(repository, "/")
 	if len(repoInfo) != 2 {
-		disgo.Errorln(style.Failure(style.SymbolCross, " invalid repository %q: should be of the form \"repoOwner/repoName\"", repository))
-		os.Exit(1)
+		return fmt.Errorf("invalid repository %q: should be of the form \"repoOwner/repoName\"", repository)
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
-		disgo.Errorln(style.Failure(style.SymbolCross, " missing github access token. Please set one in your GITHUB_TOKEN environment variable, with \"repo\" rights."))
-		os.Exit(1)
+		return errors.New("missing github access token. Please set one in your GITHUB_TOKEN environment variable, with \"repo\" rights")
 	}
 
-	astronomerCtx := &astronomer_context.Context{
+	starauditCtx := &staraudit_context.Context{
 		RepoOwner:          repoInfo[0],
 		RepoName:           repoInfo[1],
 		GithubToken:        token,
@@ -85,16 +92,13 @@ func main() {
 		Verbose:            viper.GetBool("verbose"),
 	}
 
-	if err := detectFakeStars(ctx, astronomerCtx); err != nil {
-		disgo.Errorln(style.Failure(style.SymbolCross, " ", err))
-		os.Exit(1)
-	}
+	return detectFakeStars(ctx, starauditCtx)
 }
 
-func detectFakeStars(ctx context.Context, astronomerCtx *astronomer_context.Context) error {
-	disgo.Infof("Beginning fetching process for repository %s/%s\n", astronomerCtx.RepoOwner, astronomerCtx.RepoName)
+func detectFakeStars(ctx context.Context, starauditCtx *staraudit_context.Context) error {
+	disgo.Infof("Beginning fetching process for repository %s/%s\n", starauditCtx.RepoOwner, starauditCtx.RepoName)
 
-	cursors, totalUsers, err := gql.FetchStargazers(ctx, astronomerCtx)
+	cursors, totalUsers, err := gql.FetchStargazers(ctx, starauditCtx)
 	if err != nil {
 		return fmt.Errorf("failed to query stargazer data: %w", err)
 	}
@@ -105,32 +109,34 @@ func detectFakeStars(ctx context.Context, astronomerCtx *astronomer_context.Cont
 
 	// For now, we only fetch contributions since 2013. It will be configurable later on
 	// once the algorithm is more accurate and more data has been fetched.
-	if !astronomerCtx.ScanAll && totalUsers > astronomerCtx.Stars {
-		disgo.Infof("Fetching contributions for %d users up to year %d\n", astronomerCtx.Stars, 2013)
+	if !starauditCtx.ScanAll && totalUsers > starauditCtx.Stars {
+		disgo.Infof("Fetching contributions for %d users up to year %d\n", starauditCtx.Stars, 2013)
 	} else {
 		disgo.Infof("Fetching contributions for %d users up to year %d\n", totalUsers, 2013)
 	}
 
-	users, err := gql.FetchContributions(ctx, astronomerCtx, cursors, 2013)
+	users, err := gql.FetchContributions(ctx, starauditCtx, cursors, 2013)
 	if err != nil {
 		return fmt.Errorf("failed to query stargazer data: %w", err)
 	}
 
-	report, err := trust.Compute(ctx, astronomerCtx, users)
+	report, err := trust.Compute(ctx, starauditCtx, users)
 	if err != nil {
 		return fmt.Errorf("unable to compute trust report: %w", err)
 	}
 
 	trust.Render(report, true)
 
-	err = signature.SendReport(ctx, astronomerCtx, report)
+	// Failing to send the report to the staraudit server is not fatal:
+	// the report has already been computed and rendered locally.
+	err = signature.SendReport(ctx, starauditCtx, report)
 	if err != nil {
-		return fmt.Errorf("unable to send trust report: %w", err)
+		disgo.Errorln(style.Important("Unable to send trust report to the staraudit server: ", err))
 	}
 
 	disgo.Infof("\n%s Analysis successful. %d users computed.\n", style.Success(style.SymbolCheck), len(users))
 
-	badgeEndpoint := url.QueryEscape(fmt.Sprintf("https://astronomer.ullaakut.eu/shields?owner=%s&name=%s", astronomerCtx.RepoOwner, astronomerCtx.RepoName))
+	badgeEndpoint := url.QueryEscape(fmt.Sprintf("https://astronomer.ullaakut.eu/shields?owner=%s&name=%s", starauditCtx.RepoOwner, starauditCtx.RepoName))
 
 	disgo.Infof("GitHub badge available at https://img.shields.io/endpoint.svg?url=%s\n", badgeEndpoint)
 

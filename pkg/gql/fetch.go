@@ -16,7 +16,7 @@ import (
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/cenkalti/backoff/v3"
-	"github.com/stn1slv/astronomer/pkg/context"
+	"github.com/stn1slv/staraudit/pkg/context"
 	"github.com/vbauerster/mpb/v4"
 	"github.com/vbauerster/mpb/v4/decor"
 	"golang.org/x/sync/errgroup"
@@ -31,7 +31,7 @@ var (
 	// blacklistedUsers contains the list of users that can't be
 	// fetched from the GitHub API. When one of these users is found
 	// in a list request, he must be skipped when fetching user contributions
-	// or astronomer will be stuck due to constant API timeouts.
+	// or staraudit will be stuck due to constant API timeouts.
 	blacklistedUsers = []string{
 		// "jstrachan", // has been fixed.
 	}
@@ -39,7 +39,7 @@ var (
 
 // FetchStargazers fetches the list of cursors to iterate upon to
 // fetch stargazer contributions.
-func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cursors []string, totalUsers uint, err error) {
+func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cursors []string, totalUsers uint, err error) {
 	var (
 		stargazers     []stargazers
 		lastCursor     string
@@ -47,18 +47,18 @@ func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cu
 		rateLimitSleep time.Duration
 	)
 
-	if astronomerCtx.Stars < uint(contribPagination) {
+	if starauditCtx.Stars < uint(contribPagination) {
 		return nil, 0, fmt.Errorf("unable to compute less stars than the amount fetched per page. Please set stars to at least %d", contribPagination)
 	}
 
 	// Round amount of stars to get according to pagination.
-	if astronomerCtx.Stars%contribPagination != 0 {
-		astronomerCtx.Stars -= astronomerCtx.Stars % contribPagination
-		disgo.Errorln(style.Failure("Rounding amount of stars to fetch to ", astronomerCtx.Stars, " in order to match pagination"))
+	if starauditCtx.Stars%contribPagination != 0 {
+		starauditCtx.Stars -= starauditCtx.Stars % contribPagination
+		disgo.Errorln(style.Failure("Rounding amount of stars to fetch to ", starauditCtx.Stars, " in order to match pagination"))
 	}
 
 	// Inject constants in request body.
-	requestBody := buildRequestBody(astronomerCtx, fetchUsersRequest, listPagination)
+	requestBody := buildRequestBody(starauditCtx, fetchUsersRequest, listPagination)
 	client := &http.Client{Timeout: defaultTimeout}
 
 	disgo.StartStep("Pre-fetching all stargazers")
@@ -84,11 +84,11 @@ func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cu
 			return nil, 0, disgo.FailStepf("unable to prepare request: %v", err)
 		}
 
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", astronomerCtx.GithubToken))
-		req.Header.Set("User-Agent", "Astronomer")
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", starauditCtx.GithubToken))
+		req.Header.Set("User-Agent", "StarAudit")
 
 		// in the cache directory.
-		resp, err := getCache(astronomerCtx, req, listFilePagination(lastCursor)) // nolint:bodyclose
+		resp, err := getCache(starauditCtx, req, listFilePagination(lastCursor)) // nolint:bodyclose
 		if err != nil {
 			return nil, 0, disgo.FailStepf("unable to get cached file: %v", err)
 		}
@@ -153,7 +153,7 @@ func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cu
 
 		// Since we arrived here, we got a successful response, so we store it
 		// in the cache directory.
-		err = putCache(astronomerCtx, req, listFilePagination(lastCursor), responseBody)
+		err = putCache(starauditCtx, req, listFilePagination(lastCursor), responseBody)
 		if err != nil {
 			return nil, 0, disgo.FailStepf("unable to write user contribution data to cache: %v", err)
 		}
@@ -175,21 +175,21 @@ func FetchStargazers(ctx stdcontext.Context, astronomerCtx *context.Context) (cu
 		}
 	}
 
-	cursors = getCursors(astronomerCtx, stargazers, totalUsers)
+	cursors = getCursors(starauditCtx, stargazers, totalUsers)
 
 	return cursors, totalUsers, nil
 }
 
 // FetchContributions fetches the contribution data of a list of stargazers.
-// astronomerCtx contains the scanned context of the astronomer command.
-// untilYear is the year until which to scan for contribuitons.
-func FetchContributions(ctx stdcontext.Context, astronomerCtx *context.Context, cursors []string, untilYear int) ([]User, error) {
+// starauditCtx contains the scanned context of the staraudit command.
+// untilYear is the year until which to scan for contributions.
+func FetchContributions(ctx stdcontext.Context, starauditCtx *context.Context, cursors []string, untilYear int) ([]User, error) {
 	var (
 		users []User
 		mu    sync.Mutex
 	)
 
-	requestBody := buildRequestBody(astronomerCtx, fetchContributionsRequest, contribPagination)
+	requestBody := buildRequestBody(starauditCtx, fetchContributionsRequest, contribPagination)
 	client := &http.Client{Timeout: defaultTimeout}
 
 	progress, bar := setupProgressBar(len(cursors))
@@ -197,7 +197,7 @@ func FetchContributions(ctx stdcontext.Context, astronomerCtx *context.Context, 
 
 	// If we are scanning only a portion of stargazers, the
 	// scan does not start with a page without a cursor.
-	isReverseOrder := uint(len(cursors)) > astronomerCtx.Stars/contribPagination
+	isReverseOrder := uint(len(cursors)) > starauditCtx.Stars/contribPagination
 
 	totalPages := len(cursors)
 
@@ -222,7 +222,7 @@ func FetchContributions(ctx stdcontext.Context, astronomerCtx *context.Context, 
 			for i := 0; currentYear-i > untilYear-1; i++ {
 				yearToFetch := currentYear - i
 
-				err := fetchYearlyContributions(gCtx, astronomerCtx, client, requestBody, currentCursor, yearToFetch, untilYear, &users, &mu, bar)
+				err := fetchYearlyContributions(gCtx, starauditCtx, client, requestBody, currentCursor, yearToFetch, untilYear, &users, &mu, bar)
 				if err != nil {
 					return err
 				}
@@ -242,7 +242,7 @@ func FetchContributions(ctx stdcontext.Context, astronomerCtx *context.Context, 
 
 func fetchYearlyContributions(
 	ctx stdcontext.Context,
-	astronomerCtx *context.Context,
+	starauditCtx *context.Context,
 	client *http.Client,
 	requestBody string,
 	currentCursor string,
@@ -280,11 +280,11 @@ func fetchYearlyContributions(
 	}
 
 	// Inject GitHub token for API authorization.
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", astronomerCtx.GithubToken))
-	req.Header.Set("User-Agent", "Astronomer")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", starauditCtx.GithubToken))
+	req.Header.Set("User-Agent", "StarAudit")
 
 	// Try to get a cached response to this request.
-	resp, err := getCache(astronomerCtx, req, contribFilePagination(currentCursor, currentYear)) // nolint:bodyclose
+	resp, err := getCache(starauditCtx, req, contribFilePagination(currentCursor, currentYear)) // nolint:bodyclose
 	if err != nil {
 		return fmt.Errorf("unable to get cached file: %w", err)
 	}
@@ -370,7 +370,7 @@ func fetchYearlyContributions(
 	// If file was fetched, write it in the cache. If we already got it from the cache,
 	// no need to rewrite it.
 	if !cachedFileFound {
-		err = putCache(astronomerCtx, req, contribFilePagination(currentCursor, currentYear), responseBody)
+		err = putCache(starauditCtx, req, contribFilePagination(currentCursor, currentYear), responseBody)
 		if err != nil {
 			mu.Lock()
 			usersSoFar := len(*users)
@@ -385,10 +385,10 @@ func fetchYearlyContributions(
 	return nil
 }
 
-func buildRequestBody(astronomerCtx *context.Context, baseRequest string, pagination int) string {
+func buildRequestBody(starauditCtx *context.Context, baseRequest string, pagination int) string {
 	// Inject constant values into request body.
-	requestBody := strings.Replace(baseRequest, "$repoOwner", astronomerCtx.RepoOwner, 1)
-	requestBody = strings.Replace(requestBody, "$repoName", astronomerCtx.RepoName, 1)
+	requestBody := strings.Replace(baseRequest, "$repoOwner", starauditCtx.RepoOwner, 1)
+	requestBody = strings.Replace(requestBody, "$repoName", starauditCtx.RepoName, 1)
 	requestBody = strings.Replace(requestBody, "$pagination", fmt.Sprint(pagination), 1)
 
 	// Remove all `\n` so that it's valid JSON. Remove all spaces.
@@ -402,7 +402,7 @@ func buildRequestBody(astronomerCtx *context.Context, baseRequest string, pagina
 // Return the appropriate cursors to be used by the fetchContributions function
 // according to the value of ${contribPagination}. Also makes sure not to include
 // any page of users containing blacklisted individuals.
-func getCursors(astronomerCtx *context.Context, sg []stargazers, totalUsers uint) []string {
+func getCursors(starauditCtx *context.Context, sg []stargazers, totalUsers uint) []string {
 	var (
 		skip      bool
 		iteration uint
@@ -448,7 +448,7 @@ func getCursors(astronomerCtx *context.Context, sg []stargazers, totalUsers uint
 	var selectedCursors []string
 
 	// totalCursorAmount is the total amount of cursors to fetch.
-	totalCursorAmount := int(astronomerCtx.Stars) / contribPagination // #nosec G115
+	totalCursorAmount := int(starauditCtx.Stars) / contribPagination // #nosec G115
 
 	// beginCursorAmount is the amount of cursors to fetch for the 200 first users.
 	disgo.Infof("Selecting 200 first stargazers out of %d\n", totalUsers)
@@ -456,24 +456,20 @@ func getCursors(astronomerCtx *context.Context, sg []stargazers, totalUsers uint
 
 	selectedCursors = append(selectedCursors, cursors[len(cursors)-beginCursorAmount-1:len(cursors)-1]...)
 
-	if astronomerCtx.ScanAll || totalUsers < astronomerCtx.Stars {
+	if starauditCtx.ScanAll || totalUsers < starauditCtx.Stars {
 		disgo.Infof("Selecting all %d remaining stargazers\n", totalUsers-200)
 		selectedCursors = append(selectedCursors, cursors[:len(cursors)-beginCursorAmount]...)
 	} else {
-		// endCursorAmount is the amount of cursors to fetch to get the random users.
-		endCursorAmount := totalCursorAmount - beginCursorAmount
-		disgo.Infof("Selecting %d random stargazers out of %d\n", (endCursorAmount-1)*contribPagination, totalUsers)
+		// endCursorAmount is the amount of cursors to fetch to get the random
+		// users. One page is subtracted because the first page of stargazers
+		// is always fetched without a cursor.
+		endCursorAmount := totalCursorAmount - beginCursorAmount - 1
+		disgo.Infof("Selecting %d random stargazers out of %d\n", endCursorAmount*contribPagination, totalUsers)
 
-		selectedCursors = pickRandomStringsExcept(cursors, selectedCursors, uint(endCursorAmount)) // #nosec G115
+		selectedCursors = pickRandomExcept(cursors, selectedCursors, uint(endCursorAmount)) // #nosec G115
 	}
 
 	return selectedCursors
-}
-
-// Pick random strings picks ${amount} random strings from the
-// given slice of strings, except those that were already picked.
-func pickRandomStringsExcept(s []string, picked []string, amount uint) []string {
-	return pickRandomExcept(s, picked, amount)
 }
 
 // pickRandomExcept picks `amount` random elements from the
@@ -482,9 +478,9 @@ func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
 	// Make the random non-deterministic.
 	random := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()))) // #nosec G404
 
-	for i := uint(1); i < amount; i++ {
+	for remaining := amount; remaining > 0; {
 		// Pick an element.
-		newPick := s[random.IntN(len(s)-1)]
+		newPick := s[random.IntN(len(s))]
 
 		// Check if it has already been selected.
 		var found bool
@@ -495,13 +491,13 @@ func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
 			}
 		}
 
-		// Regenerate another one if this index has already been selected.
+		// Regenerate another one if this element has already been selected.
 		if found {
-			i--
 			continue
 		}
 
 		picked = append(picked, newPick)
+		remaining--
 	}
 
 	return picked

@@ -1,7 +1,7 @@
-# Makefile for Astronomer project
+# Makefile for StarAudit project
 
-BINARY_NAME=astronomer
-DOCKER_IMAGE=stn1slv/astronomer
+BINARY_NAME=staraudit
+DOCKER_IMAGE=stn1slv/staraudit
 
 .PHONY: all
 all: build test lint

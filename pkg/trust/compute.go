@@ -10,11 +10,11 @@ import (
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
 	"github.com/montanaflynn/stats"
-	astronomer_context "github.com/stn1slv/astronomer/pkg/context"
-	"github.com/stn1slv/astronomer/pkg/gql"
+	staraudit_context "github.com/stn1slv/staraudit/pkg/context"
+	"github.com/stn1slv/staraudit/pkg/gql"
 )
 
-// Factor represents one of the trust factors used to compte
+// Factor represents one of the trust factors used to compute
 // the trust score for a repository.
 type Factor struct {
 	// The raw value of this factor.
@@ -43,7 +43,7 @@ type Report struct {
 }
 
 // Compute computes all trust factors for the stargazers of a repository.
-func Compute(_ context.Context, _ *astronomer_context.Context, users []gql.User) (*Report, error) {
+func Compute(_ context.Context, _ *staraudit_context.Context, users []gql.User) (*Report, error) {
 	trustData := make(map[FactorName][]float64)
 	now := time.Now().Year()
 

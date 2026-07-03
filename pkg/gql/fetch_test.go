@@ -3,7 +3,7 @@ package gql
 import (
 	"testing"
 
-	"github.com/stn1slv/astronomer/pkg/context"
+	"github.com/stn1slv/staraudit/pkg/context"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,12 +37,12 @@ func TestBuildRequestBody(t *testing.T) {
 	for description, test := range tests {
 		t.Run(description, func(t *testing.T) {
 			t.Parallel()
-			astronomerCtx := &context.Context{
+			starauditCtx := &context.Context{
 				RepoOwner: test.repoOwner,
 				RepoName:  test.repoName,
 			}
 
-			requestBody := buildRequestBody(astronomerCtx, test.baseRequest, test.pagination)
+			requestBody := buildRequestBody(starauditCtx, test.baseRequest, test.pagination)
 
 			assert.Equal(t, test.expectedBody, requestBody)
 		})
@@ -143,12 +143,12 @@ func TestGetCursors(t *testing.T) {
 	for description, test := range tests {
 		t.Run(description, func(t *testing.T) {
 			t.Parallel()
-			astronomerCtx := &context.Context{
+			starauditCtx := &context.Context{
 				ScanAll: test.scanAll,
 				Stars:   test.starLimit,
 			}
 
-			cursors := getCursors(astronomerCtx, test.stargazers, test.totalUsers)
+			cursors := getCursors(starauditCtx, test.stargazers, test.totalUsers)
 
 			assert.Equal(t, test.expectedCursors, cursors)
 		})

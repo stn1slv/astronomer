@@ -1,51 +1,56 @@
-version: 2
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
-  disable-all: true
+  default: none
   enable:
+    - bodyclose
     - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - revive
+    - errorlint
+    - exhaustive
+    - forcetypeassert
+    - goconst
     - gocritic
     - gosec
-    - bodyclose
-    - noctx
-    - errorlint
-    - prealloc
-    - unparam
-    - nilerr
-    - forcetypeassert
+    - govet
+    - ineffassign
     - makezero
-    - exhaustive
-    - goconst
     - misspell
+    - nilerr
+    - noctx
+    - prealloc
+    - revive
+    - staticcheck
     - testifylint
-
-linters-settings:
-  revive:
+    - unparam
+    - unused
+  exclusions:
     rules:
-      - name: context-as-first-argument
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: var-naming
-      - name: package-comments
-  exhaustive:
-    default-signifies-exhaustive: true
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  testifylint:
-    enable-all: true
+      # Repeated literals in test fixtures do not need to be constants.
+      - path: _test\.go
+        linters:
+          - goconst
+  settings:
+    revive:
+      rules:
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: var-naming
+        - name: package-comments
+    exhaustive:
+      default-signifies-exhaustive: true
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    testifylint:
+      enable-all: true
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

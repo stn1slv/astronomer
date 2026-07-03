@@ -1,6 +1,6 @@
 # Development Guidelines
 
-Specific instructions and best practices for the Astronomer project.
+Specific instructions and best practices for the StarAudit project.
 
 ## Core Principles
 
@@ -35,7 +35,7 @@ We use a `Makefile` as the single entry point for development tasks.
 | `test` | Run all unit tests. |
 | `lint` | Run `golangci-lint` (if installed). |
 | `format` | Run `go fmt` on the entire project. |
-| `build` | Compile the `astronomer` binary. |
+| `build` | Compile the `staraudit` binary. |
 | `docker` | Build the Docker image. |
 | `run` | Build and run the application locally (requires `REPO` env). |
 | `upgrade-deps` | Upgrade all dependencies to their latest versions. |
@@ -49,4 +49,4 @@ We use a `Makefile` as the single entry point for development tasks.
 ## Security
 
 - **GitHub Token**: Required via `GITHUB_TOKEN` environment variable.
-- **Private Key**: Can be provided via `ASTRONOMER_PRIVATE_KEY` environment variable. Falls back to an embedded key if not provided (not recommended for production).
+- **Private Key**: Can be provided via `STARAUDIT_PRIVATE_KEY` environment variable. Falls back to an embedded key if not provided (not recommended for production).

@@ -5,6 +5,6 @@ RUN apk --no-cache --no-progress add git ca-certificates && update-ca-certificat
 FROM scratch AS base
 
 COPY --from=base-image /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY dist/astronomer-linux-amd64 /astronomer
+COPY dist/staraudit-linux-amd64 /staraudit
 
-ENTRYPOINT ["/astronomer"]
+ENTRYPOINT ["/staraudit"]
