@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -48,10 +49,18 @@ func parseArguments() error {
 }
 
 func main() {
+	if err := run(); err != nil {
+		disgo.Errorln(style.Failure(style.SymbolCross, " ", err))
+		os.Exit(1)
+	}
+}
+
+// run executes the scan. It is separated from main so that deferred
+// cleanups run before the process exits with an error code.
+func run() error {
 	err := parseArguments()
 	if err != nil {
-		disgo.Errorln(style.Failure(style.SymbolCross, err))
-		os.Exit(1)
+		return err
 	}
 
 	disgo.SetTerminalOptions(disgo.WithColors(true), disgo.WithDebug(viper.GetBool("verbose")))
@@ -65,14 +74,12 @@ func main() {
 	// Split repository into repo owner & repo name.
 	repoInfo := strings.Split(repository, "/")
 	if len(repoInfo) != 2 {
-		disgo.Errorln(style.Failure(style.SymbolCross, " invalid repository %q: should be of the form \"repoOwner/repoName\"", repository))
-		os.Exit(1)
+		return fmt.Errorf("invalid repository %q: should be of the form \"repoOwner/repoName\"", repository)
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
-		disgo.Errorln(style.Failure(style.SymbolCross, " missing github access token. Please set one in your GITHUB_TOKEN environment variable, with \"repo\" rights."))
-		os.Exit(1)
+		return errors.New("missing github access token. Please set one in your GITHUB_TOKEN environment variable, with \"repo\" rights")
 	}
 
 	starauditCtx := &staraudit_context.Context{
@@ -85,10 +92,7 @@ func main() {
 		Verbose:            viper.GetBool("verbose"),
 	}
 
-	if err := detectFakeStars(ctx, starauditCtx); err != nil {
-		disgo.Errorln(style.Failure(style.SymbolCross, " ", err))
-		os.Exit(1)
-	}
+	return detectFakeStars(ctx, starauditCtx)
 }
 
 func detectFakeStars(ctx context.Context, starauditCtx *staraudit_context.Context) error {
