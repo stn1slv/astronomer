@@ -49,4 +49,4 @@ We use a `Makefile` as the single entry point for development tasks.
 ## Security
 
 - **GitHub Token**: Required via `GITHUB_TOKEN` environment variable.
-- **Private Key**: Can be provided via `STARAUDIT_PRIVATE_KEY` environment variable. Falls back to an embedded key if not provided (not recommended for production).
+- **Private Key**: Report signing and upload are opt-in. Set `STARAUDIT_PRIVATE_KEY` to a PEM encoded PKCS#1 RSA key to enable them; when it is unset, the report is still computed and rendered locally, it is simply not uploaded. `STARAUDIT_PUBLIC_KEY` is the matching key used by `signature.Check`. No key is embedded in the binary.
