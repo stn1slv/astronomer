@@ -38,6 +38,7 @@ const (
 	// Fetching more than 20 users at a time is pretty much a guaranteed timeout.
 	fetchContributionsRequest = `{"query" : "{
 			rateLimit {
+				limit
 				remaining
 			}
 			repository(owner: \"$repoOwner\", name: \"$repoName\") {
@@ -81,7 +82,10 @@ type User struct {
 func (u User) DaysOld() float64 {
 	creationDate, err := time.Parse(iso8601Format, u.CreatedAt)
 	if err != nil {
+		// Falling through would use the zero time and report the account as
+		// roughly two thousand years old, which inflates its trust score.
 		disgo.Errorln("Unexpected date time format from GraphQL API:", err)
+		return 0
 	}
 
 	return time.Since(creationDate).Hours() / 24
