@@ -127,11 +127,15 @@ func detectFakeStars(ctx context.Context, starauditCtx *staraudit_context.Contex
 
 	trust.Render(report, true)
 
-	// Failing to send the report to the staraudit server is not fatal:
+	// Uploading the report is opt-in, and failing to upload it is not fatal:
 	// the report has already been computed and rendered locally.
-	err = signature.SendReport(ctx, starauditCtx, report)
-	if err != nil {
-		disgo.Errorln(style.Important("Unable to send trust report to the staraudit server: ", err))
+	if signature.Enabled() {
+		err = signature.SendReport(ctx, starauditCtx, report)
+		if err != nil {
+			disgo.Errorln(style.Important("Unable to send trust report to the staraudit server: ", err))
+		}
+	} else {
+		disgo.Debugln("No signing key configured, skipping report upload.")
 	}
 
 	disgo.Infof("\n%s Analysis successful. %d users computed.\n", style.Success(style.SymbolCheck), len(users))

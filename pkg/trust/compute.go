@@ -42,10 +42,24 @@ type Report struct {
 	Percentiles map[Percentile]Factor
 }
 
+const (
+	// firstStargazersAmount is the size of the "early adopters" sample that
+	// the comparative report weighs against the rest of the stargazers.
+	firstStargazersAmount = 200
+
+	// minPercentileSamples is the amount of values below which every fifth
+	// percentile cannot be computed.
+	minPercentileSamples = 20
+)
+
 // Compute computes all trust factors for the stargazers of a repository.
 func Compute(_ context.Context, _ *staraudit_context.Context, users []gql.User) (*Report, error) {
+	if len(users) == 0 {
+		return nil, fmt.Errorf("unable to compute a trust report without any stargazer data")
+	}
+
 	trustData := make(map[FactorName][]float64)
-	now := time.Now().Year()
+	now := time.Now().UTC().Year()
 
 	for idx := range users {
 		var contributionScore float64
@@ -72,7 +86,9 @@ func Compute(_ context.Context, _ *staraudit_context.Context, users []gql.User) 
 
 	defer disgo.EndStep()
 
-	if uint(len(users)) > 219 {
+	// A comparative report is only meaningful when the stargazers left over
+	// after the first block are still numerous enough to have percentiles.
+	if len(users) > firstStargazersAmount+minPercentileSamples {
 		return buildComparativeReport(trustData)
 	}
 
@@ -90,16 +106,20 @@ func buildReport(trustData map[FactorName][]float64) (*Report, error) {
 			return nil, disgo.FailStepf("unable to compute score for factor %q: %v", factor, err)
 		}
 
-		trustPercent := computeTrustFromScore(score, factorReferences[factor])
+		reference, ok := factorReferences[factor]
+		if !ok {
+			return nil, disgo.FailStepf("missing trust reference for factor %q", factor)
+		}
+
 		report.Factors[factor] = Factor{
 			Value:        score,
-			TrustPercent: trustPercent,
+			TrustPercent: computeTrustFromScore(score, reference),
 		}
 	}
 
 	// Only compute percentiles if  there are enough stargazers to be
 	// able to compute every fifth percentile.
-	if len(trustData[ContributionScoreFactor]) > 20 {
+	if len(trustData[ContributionScoreFactor]) > minPercentileSamples {
 		report.Percentiles = make(map[Percentile]Factor)
 		for _, percentile := range percentiles {
 			// Error is ignored on purpose.
@@ -110,18 +130,21 @@ func buildReport(trustData map[FactorName][]float64) (*Report, error) {
 				return nil, fmt.Errorf("unable to compute score trust %sth percentile: %w", percentile, err)
 			}
 
+			reference, ok := percentileReferences[percentile]
+			if !ok {
+				return nil, disgo.FailStepf("missing trust reference for the %sth percentile", percentile)
+			}
+
 			report.Percentiles[percentile] = Factor{
 				Value:        value,
-				TrustPercent: computeTrustFromScore(value, percentileReferences[percentile]),
+				TrustPercent: computeTrustFromScore(value, reference),
 			}
 		}
 	}
 
-	var allTrust []float64
-	for factorName, weight := range factorWeights {
-		for i := 0; i < weight; i++ {
-			allTrust = append(allTrust, report.Factors[factorName].TrustPercent)
-		}
+	allTrust, err := weightedTrust(report)
+	if err != nil {
+		return nil, err
 	}
 
 	// Take percentiles into consideration, if they were
@@ -181,33 +204,29 @@ func buildComparativeReport(trustData map[FactorName][]float64) (*Report, error)
 		}
 	}
 
-	for _, percentile := range percentiles {
-		// Skip percentiles if the random sample is too small to have percentiles.
-		if currentStarsReport.Percentiles[percentile].TrustPercent == 0 {
-			report.Percentiles = nil
-			break
-		}
-
-		if firstStarsReport.Percentiles[percentile].TrustPercent <= currentStarsReport.Percentiles[percentile].TrustPercent {
-			report.Percentiles[percentile] = firstStarsReport.Percentiles[percentile]
-		} else {
-			report.Percentiles[percentile] = currentStarsReport.Percentiles[percentile]
-		}
-	}
-
-	var allTrust []float64
-	for factorName, weight := range factorWeights {
-		for i := 0; i < weight; i++ {
-			allTrust = append(allTrust, report.Factors[factorName].TrustPercent)
+	// buildReport leaves Percentiles nil when a sample is too small to have
+	// them. A trust percentage of exactly zero is a legitimate result -- and
+	// the expected one for a repository with fake stars -- so it must not be
+	// used to detect that percentiles are missing.
+	if firstStarsReport.Percentiles == nil || currentStarsReport.Percentiles == nil {
+		report.Percentiles = nil
+	} else {
+		for _, percentile := range percentiles {
+			if firstStarsReport.Percentiles[percentile].TrustPercent <= currentStarsReport.Percentiles[percentile].TrustPercent {
+				report.Percentiles[percentile] = firstStarsReport.Percentiles[percentile]
+			} else {
+				report.Percentiles[percentile] = currentStarsReport.Percentiles[percentile]
+			}
 		}
 	}
 
-	for _, percentile := range percentiles {
-		// Skip percentiles if the random sample is too small to have percentiles.
-		if report.Percentiles[percentile].TrustPercent == 0 {
-			break
-		}
-		allTrust = append(allTrust, report.Percentiles[percentile].TrustPercent)
+	allTrust, err := weightedTrust(report)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, percentileTrust := range report.Percentiles {
+		allTrust = append(allTrust, percentileTrust.TrustPercent)
 	}
 
 	trust, err := stats.Mean(allTrust)
@@ -222,21 +241,41 @@ func buildComparativeReport(trustData map[FactorName][]float64) (*Report, error)
 	return report, nil
 }
 
+// weightedTrust repeats each factor's trust percentage according to its
+// weight, so that averaging the result yields the weighted overall trust.
+func weightedTrust(report *Report) ([]float64, error) {
+	var allTrust []float64
+
+	for factorName, weight := range factorWeights {
+		factor, ok := report.Factors[factorName]
+		if !ok {
+			// A missing factor would otherwise contribute a trust of zero,
+			// which is indistinguishable from a genuinely computed zero.
+			return nil, disgo.FailStepf("no value was computed for factor %q", factorName)
+		}
+
+		for i := 0; i < weight; i++ {
+			allTrust = append(allTrust, factor.TrustPercent)
+		}
+	}
+
+	return allTrust, nil
+}
+
 // splitTrustData split a trust data map between first and random stargazers.
 func splitTrustData(trustData map[FactorName][]float64) (first, current map[FactorName][]float64) {
-	total := len(trustData[ContributionScoreFactor])
-
-	// Compute first stars.
 	first = make(map[FactorName][]float64)
 	current = make(map[FactorName][]float64)
-	for _, factor := range factors {
-		for i := 0; i < 200; i++ {
-			first[factor] = append(first[factor], trustData[factor][i])
-		}
 
-		for i := 200; i < total; i++ {
-			current[factor] = append(current[factor], trustData[factor][i])
-		}
+	for _, factor := range factors {
+		values := trustData[factor]
+
+		// Each factor is bounded by the length of its own slice: they are
+		// not guaranteed to hold the same amount of samples.
+		split := min(firstStargazersAmount, len(values))
+
+		first[factor] = append(first[factor], values[:split]...)
+		current[factor] = append(current[factor], values[split:]...)
 	}
 
 	return first, current
@@ -247,10 +286,12 @@ func splitTrustData(trustData map[FactorName][]float64) (first, current map[Fact
 // both. Trust will reach 0.99 if the score is over 1.5 times what
 // is considered a good score.
 func computeTrustFromScore(score, reference float64) float64 {
-	trust := score / (1.5 * reference)
-	if trust > 0.99 {
-		trust = 0.99
+	// Dividing by a zero reference yields NaN for a zero score and +Inf
+	// otherwise, and +Inf clamps to maximum trust. Neither is a meaningful
+	// answer, so an unusable reference scores no trust at all.
+	if reference <= 0 {
+		return 0
 	}
 
-	return trust
+	return min(score/(1.5*reference), 0.99)
 }

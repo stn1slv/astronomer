@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"os"
 )
 
 // Check verifies whether a report has been signed
@@ -21,7 +22,12 @@ func Check(report *SignedReport) error {
 
 	hashedReport := sha512.Sum512(data)
 
-	keyBlock, _ := pem.Decode([]byte(publicKeyPemData))
+	pemKey := os.Getenv(publicKeyEnvVar)
+	if pemKey == "" {
+		return fmt.Errorf("no verification key: set %s to verify reports", publicKeyEnvVar)
+	}
+
+	keyBlock, _ := pem.Decode([]byte(pemKey))
 	if keyBlock == nil {
 		return fmt.Errorf("unable to decode public key")
 	}

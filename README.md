@@ -64,9 +64,14 @@ Run the scan:
 
 *   **`repositoryOwner/repositoryName`**: (Required) The repository to scan.
 *   **`-c, --cachedir` (string)**: Directory for cached data (default: `./data`).
-*   **`-s, --stars` (int)**: Maximum stars to scan in fast mode (default: `1000`).
+*   **`-s, --stars` (uint)**: Maximum stars to scan in fast mode (default: `1000`). Rounded down to a multiple of 20 to match pagination.
 *   **`-a, --all`**: Scan all stargazers. Overrides `--stars`. Use with caution on large repositories.
 *   **`-v, --verbose`**: Enable detailed logs and comparative analysis reports.
+
+### Environment variables
+
+*   **`GITHUB_TOKEN`**: (Required) A personal access token with `repo` read rights.
+*   **`STARAUDIT_PRIVATE_KEY`**: (Optional) PEM encoded PKCS#1 RSA key. Report signing and upload to Astrolab are opt-in: without this key the report is still computed and rendered locally, it is simply not uploaded.
 
 ## Development
 

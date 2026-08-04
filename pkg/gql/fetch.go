@@ -9,52 +9,138 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Ullaakut/disgo"
 	"github.com/Ullaakut/disgo/style"
-	"github.com/cenkalti/backoff/v3"
+	"github.com/cenkalti/backoff/v5"
 	"github.com/stn1slv/staraudit/pkg/context"
-	"github.com/vbauerster/mpb/v4"
-	"github.com/vbauerster/mpb/v4/decor"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 	"golang.org/x/sync/errgroup"
 )
 
-const year = 24 * time.Hour * 365
-const defaultTimeout = 30 * time.Second
-
 var (
-	rateLimitSleepDuration time.Duration
+	// githubGraphQLURL is the endpoint every request in this package targets.
+	// It is a variable so that tests can point it at a stub server.
+	githubGraphQLURL = "https://api.github.com/graphql"
 
-	// blacklistedUsers contains the list of users that can't be
-	// fetched from the GitHub API. When one of these users is found
-	// in a list request, he must be skipped when fetching user contributions
-	// or staraudit will be stuck due to constant API timeouts.
-	blacklistedUsers = []string{
-		// "jstrachan", // has been fixed.
-	}
+	// retryInterval is the constant delay between two attempts.
+	retryInterval = 15 * time.Second
 )
+
+const (
+	defaultTimeout = 30 * time.Second
+
+	// maxAttempts is how many times a request is tried before giving up.
+	maxAttempts = 20
+
+	// rateLimitThreshold is the amount of remaining API points below which
+	// requests start being spaced out.
+	rateLimitThreshold = 10
+)
+
+// blacklistedUsers contains the list of users that can't be
+// fetched from the GitHub API. When one of these users is found
+// in a list request, he must be skipped when fetching user contributions
+// or staraudit will be stuck due to constant API timeouts.
+var blacklistedUsers = []string{
+	// "jstrachan", // has been fixed.
+}
+
+// limiter is shared by the stargazer and contribution fetches so that what
+// one phase learns about the remaining quota applies to the next.
+var limiter rateLimiter
+
+// rateLimiter derives a delay between requests from the rate limit
+// information returned by the GitHub API.
+type rateLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	nextSlot time.Time
+}
+
+// update recomputes the interval from a rate limit payload. It is cleared
+// again as soon as the remaining quota recovers.
+func (r *rateLimiter) update(limit, remaining int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if limit <= 0 || remaining > rateLimitThreshold {
+		r.interval = 0
+		r.nextSlot = time.Time{}
+
+		return
+	}
+
+	disgo.Debugln("Rate limit reached, slowing down requests")
+
+	r.interval = time.Hour / time.Duration(limit)
+}
+
+// reserve claims the next request slot and reports how long to wait for it.
+// Slots are handed out one interval apart, so concurrent workers queue up
+// behind each other instead of all sleeping and then firing at once.
+func (r *rateLimiter) reserve(now time.Time) time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.interval <= 0 {
+		return 0
+	}
+
+	if r.nextSlot.Before(now) {
+		r.nextSlot = now
+	}
+
+	wait := r.nextSlot.Sub(now)
+	r.nextSlot = r.nextSlot.Add(r.interval)
+
+	return wait
+}
+
+// wait blocks until this caller's slot comes up, or until ctx is cancelled.
+func (r *rateLimiter) wait(ctx stdcontext.Context) error {
+	wait := r.reserve(time.Now())
+	if wait <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // FetchStargazers fetches the list of cursors to iterate upon to
 // fetch stargazer contributions.
 func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cursors []string, totalUsers uint, err error) {
 	var (
-		stargazers     []stargazers
-		lastCursor     string
-		page           int
-		rateLimitSleep time.Duration
+		stargazers []stargazers
+		lastCursor string
 	)
 
-	if starauditCtx.Stars < uint(contribPagination) {
-		return nil, 0, fmt.Errorf("unable to compute less stars than the amount fetched per page. Please set stars to at least %d", contribPagination)
-	}
+	// The star limit is only meaningful when scanning a subset of the
+	// stargazers, so it is neither validated nor rounded under --all.
+	if !starauditCtx.ScanAll {
+		if starauditCtx.Stars < uint(contribPagination) {
+			return nil, 0, fmt.Errorf("unable to compute less stars than the amount fetched per page. Please set stars to at least %d", contribPagination)
+		}
 
-	// Round amount of stars to get according to pagination.
-	if starauditCtx.Stars%contribPagination != 0 {
-		starauditCtx.Stars -= starauditCtx.Stars % contribPagination
-		disgo.Errorln(style.Failure("Rounding amount of stars to fetch to ", starauditCtx.Stars, " in order to match pagination"))
+		// Round amount of stars to get according to pagination.
+		if starauditCtx.Stars%contribPagination != 0 {
+			starauditCtx.Stars -= starauditCtx.Stars % contribPagination
+			disgo.Infoln(style.Important("Rounding amount of stars to fetch to ", starauditCtx.Stars, " in order to match pagination"))
+		}
 	}
 
 	// Inject constants in request body.
@@ -66,10 +152,6 @@ func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cur
 	defer disgo.EndStep()
 
 	for {
-		var response *listStargazersResponse
-
-		page++
-
 		paginatedRequestBody := requestBody
 		if lastCursor != "" {
 			paginatedRequestBody = strings.Replace(
@@ -79,86 +161,12 @@ func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cur
 				1)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(paginatedRequestBody)))
+		response, err := fetchOrCache(ctx, starauditCtx, client, paginatedRequestBody, listFilePagination(lastCursor))
 		if err != nil {
-			return nil, 0, disgo.FailStepf("unable to prepare request: %v", err)
-		}
-
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", starauditCtx.GithubToken))
-		req.Header.Set("User-Agent", "StarAudit")
-
-		// in the cache directory.
-		resp, err := getCache(starauditCtx, req, listFilePagination(lastCursor)) // nolint:bodyclose
-		if err != nil {
-			return nil, 0, disgo.FailStepf("unable to get cached file: %v", err)
-		}
-
-		response, responseBody, _ := parseResponse(resp)
-
-		// If the request was not found in the cache, try to fetch it until it works
-		// or until the limit of 20 attempts is reached.
-		if resp == nil {
-			var attempts int
-			err = backoff.Retry(func() error {
-				// If we reached 20 attempts, give up.
-				attempts++
-				if attempts >= 20 {
-					disgo.Errorln("Failed to fetch stargazers from GitHub API too many times.")
-					return nil
-				}
-
-				// If rate limit was reached, sleep before making a request.
-				// If rate limit was not reached, rateLimitSleep will be set to zero.
-				time.Sleep(rateLimitSleep)
-
-				resp, err = client.Do(req) // nolint:bodyclose
-				if err != nil {
-					return fmt.Errorf("unable to fetch stargazers: %w", err)
-				}
-
-				if resp == nil {
-					return errors.New("nil response")
-				}
-
-				response, responseBody, err = parseResponse(resp)
-				if err != nil {
-					return err
-				}
-
-				if len(response.Errors) != 0 || response.ErrorMessage != "" {
-					if response.ErrorMessage != "" {
-						return errors.New(response.ErrorMessage)
-					}
-					return errors.New(response.Errors[0].Message)
-				}
-
-				if len(response.Repository.Stargazers.Users) == 0 {
-					return nil
-				}
-
-				return nil
-			}, backoff.NewConstantBackOff(15*time.Second))
-		}
-
-		if response == nil || err != nil {
-			return nil, 0, fmt.Errorf("failed to fetch stargazers. last body received: %s", responseBody)
+			return nil, 0, disgo.FailStepf("unable to fetch stargazers: %v", err)
 		}
 
 		stargazers = append(stargazers, response.Repository.Stargazers)
-
-		if len(response.Errors) != 0 || response.ErrorMessage != "" {
-			disgo.Errorln("Errors:", response.ErrorMessage, response.Errors)
-			return nil, 0, disgo.FailStepf("failed to fetch user contributions. last body received: %s", responseBody)
-		}
-
-		// Since we arrived here, we got a successful response, so we store it
-		// in the cache directory.
-		err = putCache(starauditCtx, req, listFilePagination(lastCursor), responseBody)
-		if err != nil {
-			return nil, 0, disgo.FailStepf("unable to write user contribution data to cache: %v", err)
-		}
-
-		lastCursor = response.Repository.Stargazers.Meta.cursor()
 
 		totalUsers += uint(len(response.Repository.Stargazers.Users))
 
@@ -166,13 +174,14 @@ func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cur
 			break
 		}
 
-		// Set the rate limit sleep duration depending on the token's limit.
-		rateLimitSleepDuration = time.Hour / time.Duration(response.RateLimit.Limit)
-
-		if response.RateLimit.Remaining <= 10 {
-			disgo.Debugln("Rate limit reached, slowing down requests")
-			rateLimitSleep = rateLimitSleepDuration
+		nextCursor := response.Repository.Stargazers.Meta.cursor()
+		if nextCursor == "" {
+			// Without a cursor the next iteration would request the very
+			// first page again, forever.
+			break
 		}
+
+		lastCursor = nextCursor
 	}
 
 	cursors = getCursors(starauditCtx, stargazers, totalUsers)
@@ -184,29 +193,34 @@ func FetchStargazers(ctx stdcontext.Context, starauditCtx *context.Context) (cur
 // starauditCtx contains the scanned context of the staraudit command.
 // untilYear is the year until which to scan for contributions.
 func FetchContributions(ctx stdcontext.Context, starauditCtx *context.Context, cursors []string, untilYear int) ([]User, error) {
-	var (
-		users []User
-		mu    sync.Mutex
-	)
+	currentYear := time.Now().UTC().Year()
+	if untilYear > currentYear {
+		return nil, fmt.Errorf("unable to scan until %d, which is in the future", untilYear)
+	}
+
+	// Every page is fetched once per year in the scanned range.
+	yearsPerPage := currentYear - untilYear + 1
 
 	requestBody := buildRequestBody(starauditCtx, fetchContributionsRequest, contribPagination)
 	client := &http.Client{Timeout: defaultTimeout}
 
-	progress, bar := setupProgressBar(len(cursors))
+	// Every page pointed at by a cursor, plus the first page, which is
+	// where the earliest stargazers live and which needs no cursor.
+	totalPages := len(cursors) + 1
+
+	progress, bar := setupProgressBar(totalPages * yearsPerPage)
+
+	// Deferred calls run last-in-first-out, so the bar is aborted before
+	// Wait is reached. Without that, an early return would leave the bar
+	// unfinished and Wait would block forever.
 	defer progress.Wait()
+	defer bar.Abort(true)
 
-	// If we are scanning only a portion of stargazers, the
-	// scan does not start with a page without a cursor.
-	isReverseOrder := uint(len(cursors)) > starauditCtx.Stars/contribPagination
-
-	totalPages := len(cursors)
-
-	// If we don't scan in reverse order (first stars first), we
-	// have fetch each page pointed at by the cursors, plus the first
-	// page which doesn't require a cursor.
-	if !isReverseOrder {
-		totalPages++
-	}
+	// Results are collected per page rather than appended as responses come
+	// back. Pages complete in an arbitrary order, and the trust report splits
+	// the users by position to compare early adopters against the rest, so
+	// arrival order would make that split - and the score - non-deterministic.
+	pageUsers := make([][]User, totalPages)
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(10)
@@ -214,19 +228,26 @@ func FetchContributions(ctx stdcontext.Context, starauditCtx *context.Context, c
 	// Iterate on pages of user contributions, following the cursors generated
 	// in fetchStargazers.
 	for page := 1; page <= totalPages; page++ {
-		currentCursor := getCursor(cursors, page, isReverseOrder)
+		currentCursor := getCursor(cursors, page)
 
 		g.Go(func() error {
-			// Get all user contributions for each year.
-			currentYear := time.Now().Year()
-			for i := 0; currentYear-i > untilYear-1; i++ {
-				yearToFetch := currentYear - i
+			var users []User
 
-				err := fetchYearlyContributions(gCtx, starauditCtx, client, requestBody, currentCursor, yearToFetch, untilYear, &users, &mu, bar)
+			// Get all user contributions for each year.
+			for yearToFetch := currentYear; yearToFetch >= untilYear; yearToFetch-- {
+				response, err := fetchYearlyContributions(gCtx, starauditCtx, client, requestBody, currentCursor, yearToFetch)
 				if err != nil {
 					return err
 				}
+
+				users = updateUsers(users, *response, yearToFetch)
+
+				bar.IncrBy(1)
 			}
+
+			// Each goroutine owns its own index, so no locking is needed.
+			pageUsers[page-1] = users
+
 			return nil
 		})
 	}
@@ -235,7 +256,22 @@ func FetchContributions(ctx stdcontext.Context, starauditCtx *context.Context, c
 		return nil, err
 	}
 
-	bar.Abort(true)
+	// Flatten in page order. A login can show up on two pages if the
+	// repository gained or lost stars mid-scan, in which case the earliest
+	// occurrence wins so that the same user is never counted twice.
+	users := make([]User, 0, totalPages*contribPagination)
+	seen := make(map[string]bool, totalPages*contribPagination)
+
+	for _, page := range pageUsers {
+		for _, user := range page {
+			if seen[user.Login] {
+				continue
+			}
+
+			seen[user.Login] = true
+			users = append(users, user)
+		}
+	}
 
 	return users, nil
 }
@@ -247,11 +283,7 @@ func fetchYearlyContributions(
 	requestBody string,
 	currentCursor string,
 	currentYear int,
-	untilYear int,
-	users *[]User,
-	mu *sync.Mutex,
-	bar *mpb.Bar,
-) error {
+) (*listStargazersResponse, error) {
 	// If this isn't the first page, inject the cursor value.
 	paginatedRequestBody := requestBody
 	if currentCursor != "firstpage" {
@@ -264,125 +296,20 @@ func fetchYearlyContributions(
 	}
 
 	// Inject the dates corresponding to the year we're scanning, into the request body.
+	// AddDate is used rather than a fixed 365 day offset so that leap years
+	// do not lose their last day.
 	from := time.Date(currentYear, time.January, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(year - 1*time.Second)
+	to := from.AddDate(1, 0, 0).Add(-time.Second)
 
 	yearlyRequestBody := strings.Replace(paginatedRequestBody, "$dateFrom", from.Format(iso8601Format), 1)
 	yearlyRequestBody = strings.Replace(yearlyRequestBody, "$dateTo", to.Format(iso8601Format), 1)
 
-	// Prepare the HTTP request with a timeout-bound context derived from the group context.
-	reqCtx, cancel := stdcontext.WithTimeout(ctx, defaultTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, "POST", "https://api.github.com/graphql", bytes.NewBuffer([]byte(yearlyRequestBody)))
+	response, err := fetchOrCache(ctx, starauditCtx, client, yearlyRequestBody, contribFilePagination(currentCursor, currentYear))
 	if err != nil {
-		return fmt.Errorf("unable to prepare request: %w", err)
+		return nil, fmt.Errorf("failed to fetch user contributions at cursor %s: %w", currentCursor, err)
 	}
 
-	// Inject GitHub token for API authorization.
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", starauditCtx.GithubToken))
-	req.Header.Set("User-Agent", "StarAudit")
-
-	// Try to get a cached response to this request.
-	resp, err := getCache(starauditCtx, req, contribFilePagination(currentCursor, currentYear)) // nolint:bodyclose
-	if err != nil {
-		return fmt.Errorf("unable to get cached file: %w", err)
-	}
-
-	response, responseBody, _ := parseResponse(resp)
-
-	cachedFileFound := resp != nil
-
-	// If the request was not found in the cache, try to fetch it until it works
-	// or until the limit of 20 attempts is reached.
-	if !cachedFileFound {
-		var attempts int
-		err = backoff.Retry(func() error {
-			// If we reached 20 attempts, give up.
-			attempts++
-			if attempts >= 20 {
-				disgo.Errorln("Failed to fetch user contributions from GitHub API too many times.")
-				return nil
-			}
-
-			// If rate limit was reached, sleep before making a request.
-			// If rate limit was not reached, rateLimitSleepDuration will be set to zero.
-			mu.Lock()
-			sleepDuration := rateLimitSleepDuration
-			mu.Unlock()
-			if sleepDuration > 0 {
-				time.Sleep(sleepDuration)
-			}
-
-			resp, err = client.Do(req) // nolint:bodyclose
-			if err != nil {
-				return fmt.Errorf("unable to fetch stargazer contributions: %w", err)
-			}
-
-			if resp == nil {
-				return errors.New("nil response")
-			}
-
-			response, responseBody, err = parseResponse(resp)
-			if err != nil {
-				return fmt.Errorf("unable to parse response: %w", err)
-			}
-
-			if len(response.Errors) != 0 || response.ErrorMessage != "" {
-
-				if response.ErrorMessage != "" {
-					return errors.New(response.ErrorMessage)
-				}
-				return errors.New(response.Errors[0].Message)
-			}
-
-			// If there is no error and no users in the response body, it must mean
-			// that we reached the end of the user list.
-			if len(response.Repository.Stargazers.Users) == 0 {
-				return nil
-			}
-
-			// Update the rate limit sleep duration depending on the token's limit.
-			if response.RateLimit.Limit > 0 {
-				mu.Lock()
-				rateLimitSleepDuration = time.Hour / time.Duration(response.RateLimit.Limit)
-				mu.Unlock()
-			}
-
-			return nil
-		}, backoff.NewConstantBackOff(15*time.Second))
-	}
-
-	if response == nil || err != nil {
-		return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
-	}
-
-	// Update list of users with users from response.
-	mu.Lock()
-	*users = updateUsers(*users, *response, currentYear)
-	mu.Unlock()
-
-	if len(response.Errors) != 0 || response.ErrorMessage != "" {
-		disgo.Errorln("Errors:", response.ErrorMessage, response.Errors)
-		return fmt.Errorf("failed to fetch user contributions. failed at cursor %s", currentCursor)
-	}
-
-	// If file was fetched, write it in the cache. If we already got it from the cache,
-	// no need to rewrite it.
-	if !cachedFileFound {
-		err = putCache(starauditCtx, req, contribFilePagination(currentCursor, currentYear), responseBody)
-		if err != nil {
-			mu.Lock()
-			usersSoFar := len(*users)
-			mu.Unlock()
-			return fmt.Errorf("unable to write user contribution data to cache: %w (users so far: %d)", err, usersSoFar)
-		}
-	}
-
-	// Update progress bar.
-	bar.IncrBy(contribPagination / (time.Now().Year() - untilYear))
-
-	return nil
+	return response, nil
 }
 
 func buildRequestBody(starauditCtx *context.Context, baseRequest string, pagination int) string {
@@ -409,6 +336,10 @@ func getCursors(starauditCtx *context.Context, sg []stargazers, totalUsers uint)
 		cursors   []string
 	)
 
+	if totalUsers == 0 {
+		return nil
+	}
+
 	for _, stargazers := range sg {
 		var currentPageUsers int
 
@@ -427,7 +358,9 @@ func getCursors(starauditCtx *context.Context, sg []stargazers, totalUsers uint)
 			// Iterate through list of stargazers, and add a cursor for every
 			// ${contribPagination} users, unless one of the users within the current
 			// page is blacklisted, in which case we skip the whole page.
-			if iteration >= (contribPagination-1) && iteration%contribPagination == contribPagination-1 {
+			// The API can return fewer edges than nodes, so the cursor for
+			// this user is not guaranteed to exist.
+			if iteration%contribPagination == contribPagination-1 && currentPageUsers < len(stargazers.Meta) {
 				if !skip {
 					cursors = append(cursors, stargazers.Meta[currentPageUsers].Cursor)
 				} else {
@@ -440,64 +373,67 @@ func getCursors(starauditCtx *context.Context, sg []stargazers, totalUsers uint)
 		}
 	}
 
-	if totalUsers <= 219 {
+	// The GitHub API returns stargazers oldest first, so the earliest
+	// adopters are at the *start* of the cursor list. The very first page of
+	// users needs no cursor, hence one fewer cursor than pages.
+	const beginCursorAmount = 200/contribPagination - 1
+
+	// Anything that fits in the first block is scanned in full.
+	if len(cursors) <= beginCursorAmount {
 		disgo.Infof("All %d stargazers will be scanned\n", totalUsers)
 		return cursors
 	}
 
-	var selectedCursors []string
+	beginCursors := cursors[:beginCursorAmount]
+	remainingCursors := cursors[beginCursorAmount:]
 
-	// totalCursorAmount is the total amount of cursors to fetch.
-	totalCursorAmount := int(starauditCtx.Stars) / contribPagination // #nosec G115
-
-	// beginCursorAmount is the amount of cursors to fetch for the 200 first users.
 	disgo.Infof("Selecting 200 first stargazers out of %d\n", totalUsers)
-	beginCursorAmount := 200/contribPagination - 1
 
-	selectedCursors = append(selectedCursors, cursors[len(cursors)-beginCursorAmount-1:len(cursors)-1]...)
+	selectedCursors := make([]string, 0, len(cursors))
+	selectedCursors = append(selectedCursors, beginCursors...)
 
 	if starauditCtx.ScanAll || totalUsers < starauditCtx.Stars {
 		disgo.Infof("Selecting all %d remaining stargazers\n", totalUsers-200)
-		selectedCursors = append(selectedCursors, cursors[:len(cursors)-beginCursorAmount]...)
-	} else {
-		// endCursorAmount is the amount of cursors to fetch to get the random
-		// users. One page is subtracted because the first page of stargazers
-		// is always fetched without a cursor.
-		endCursorAmount := totalCursorAmount - beginCursorAmount - 1
-		disgo.Infof("Selecting %d random stargazers out of %d\n", endCursorAmount*contribPagination, totalUsers)
-
-		selectedCursors = pickRandomExcept(cursors, selectedCursors, uint(endCursorAmount)) // #nosec G115
+		return append(selectedCursors, remainingCursors...)
 	}
 
-	return selectedCursors
+	// totalCursorAmount is the total amount of pages to fetch, one of which
+	// is the cursor-less first page. The subtraction is clamped because a
+	// star limit below 200 asks for fewer pages than the first block covers.
+	totalCursorAmount := int(starauditCtx.Stars / contribPagination)
+	endCursorAmount := min(max(totalCursorAmount-beginCursorAmount-1, 0), len(remainingCursors))
+
+	disgo.Infof("Selecting %d random stargazers out of %d\n", endCursorAmount*contribPagination, totalUsers)
+
+	return append(selectedCursors, pickRandom(remainingCursors, endCursorAmount)...)
 }
 
-// pickRandomExcept picks `amount` random elements from the
-// given slice except those that were already picked.
-func pickRandomExcept[T comparable](s []T, picked []T, amount uint) []T {
+// pickRandom returns `amount` distinct elements picked at random from s, or
+// all of them if fewer are available. The relative order of s is preserved,
+// so callers can rely on the result still being in stargazer order.
+func pickRandom[T any](s []T, amount int) []T {
+	amount = min(amount, len(s))
+	if amount <= 0 {
+		return nil
+	}
+
+	indices := make([]int, len(s))
+	for i := range indices {
+		indices[i] = i
+	}
+
 	// Make the random non-deterministic.
 	random := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()))) // #nosec G404
+	random.Shuffle(len(indices), func(i, j int) {
+		indices[i], indices[j] = indices[j], indices[i]
+	})
 
-	for remaining := amount; remaining > 0; {
-		// Pick an element.
-		newPick := s[random.IntN(len(s))]
+	indices = indices[:amount]
+	slices.Sort(indices)
 
-		// Check if it has already been selected.
-		var found bool
-		for _, alreadyPicked := range picked {
-			if newPick == alreadyPicked {
-				found = true
-				break
-			}
-		}
-
-		// Regenerate another one if this element has already been selected.
-		if found {
-			continue
-		}
-
-		picked = append(picked, newPick)
-		remaining--
+	picked := make([]T, 0, amount)
+	for _, idx := range indices {
+		picked = append(picked, s[idx])
 	}
 
 	return picked
@@ -515,11 +451,11 @@ func isBlacklisted(user string) bool {
 }
 
 // setupProgressBar sets the progress bar properly according to
-// the expected amount of pages of data.
-func setupProgressBar(pages int) (*mpb.Progress, *mpb.Bar) {
+// the expected amount of requests, each of which increments it by one.
+func setupProgressBar(requests int) (*mpb.Progress, *mpb.Bar) {
 	p := mpb.New(mpb.WithWidth(64))
 
-	bar := p.AddBar(int64(pages*contribPagination),
+	bar := p.AddBar(int64(requests),
 		mpb.BarRemoveOnComplete(),
 		mpb.AppendDecorators(
 			decor.Name("ETA: "),
@@ -535,21 +471,115 @@ func setupProgressBar(pages int) (*mpb.Progress, *mpb.Bar) {
 
 // getCursor returns the current cursor for the given page, depending on the
 // order the cursors are being read in.
-func getCursor(cursors []string, page int, reverseOrder bool) string {
-	// If scanning in the reverse order, we don't have any page without
-	// a cursor, so we don't start using the cursor from page 2 but
-	// the first one directly.
-	if reverseOrder && page > 0 {
-		return cursors[page-1]
-	}
-
-	// If not scanning in the reverse order, the first page does not
-	// need a cursor since we can simply request the first X users.
+// The selection always starts with the earliest stargazers, so page one is
+// always the cursor-less first page and page N uses cursors[N-2].
+func getCursor(cursors []string, page int) string {
 	if page > 1 {
 		return cursors[page-2]
 	}
 
 	return "firstpage"
+}
+
+// fetchResult carries what a single successful API call produced.
+type fetchResult struct {
+	response *listStargazersResponse
+	body     []byte
+}
+
+// doRequest performs a GraphQL query, retrying transient failures.
+//
+// The request is rebuilt on every attempt: http.Client.Do consumes the
+// request body, so re-issuing the same *http.Request would send an empty
+// payload and every retry would be rejected by the transport.
+func doRequest(ctx stdcontext.Context, client *http.Client, token, body string) (*listStargazersResponse, []byte, error) {
+	result, err := backoff.Retry(ctx, func() (fetchResult, error) {
+		// Space out requests when the API quota is running low.
+		if err := limiter.wait(ctx); err != nil {
+			return fetchResult{}, backoff.Permanent(err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, githubGraphQLURL, bytes.NewBufferString(body))
+		if err != nil {
+			return fetchResult{}, backoff.Permanent(fmt.Errorf("unable to prepare request: %w", err))
+		}
+
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+		req.Header.Set("User-Agent", "StarAudit")
+
+		resp, err := client.Do(req) // nolint:bodyclose // parseResponse closes the body.
+		if err != nil {
+			return fetchResult{}, fmt.Errorf("unable to reach the GitHub API: %w", err)
+		}
+
+		response, responseBody, parseErr := parseResponse(resp)
+
+		// Rejected credentials will not start working on the next attempt,
+		// so there is no point in spending the whole retry budget on them.
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fetchResult{}, backoff.Permanent(
+				fmt.Errorf("the GitHub API rejected the credentials (status %s), check GITHUB_TOKEN", resp.Status))
+		}
+
+		if parseErr != nil {
+			return fetchResult{}, fmt.Errorf("unusable response from the GitHub API (status %s): %w", resp.Status, parseErr)
+		}
+
+		if response.ErrorMessage != "" {
+			return fetchResult{}, fmt.Errorf("github API error (status %s): %s", resp.Status, response.ErrorMessage)
+		}
+
+		limiter.update(response.RateLimit.Limit, response.RateLimit.Remaining)
+
+		return fetchResult{response: response, body: responseBody}, nil
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(retryInterval)), backoff.WithMaxTries(maxAttempts))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return result.response, result.body, nil
+}
+
+// fetchOrCache returns the response to the given request body, reading it from
+// the local cache when possible and querying the GitHub API otherwise.
+//
+// A cache entry that cannot be parsed is discarded and refetched rather than
+// failing the whole scan, since an interrupted run can leave one behind.
+func fetchOrCache(
+	ctx stdcontext.Context,
+	starauditCtx *context.Context,
+	client *http.Client,
+	requestBody string,
+	cacheKey string,
+) (*listStargazersResponse, error) {
+	cached, filename, err := getCache(starauditCtx, cacheKey) // nolint:bodyclose // parseResponse closes the body.
+	if err != nil {
+		return nil, err
+	}
+
+	if cached != nil {
+		response, _, err := parseResponse(cached)
+		if err == nil {
+			return response, nil
+		}
+
+		disgo.Debugf("Discarding unreadable cache entry %q: %v\n", filename, err)
+
+		if err := os.Remove(filename); err != nil {
+			return nil, fmt.Errorf("unable to remove corrupt cache entry %q: %w", filename, err)
+		}
+	}
+
+	response, responseBody, err := doRequest(ctx, client, starauditCtx.GithubToken, requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := putCache(starauditCtx, cacheKey, responseBody); err != nil {
+		return nil, err
+	}
+
+	return response, nil
 }
 
 // parseResponse parses a response from the GitHub API and converts it in the appropriate data model.
@@ -582,39 +612,35 @@ func parseResponse(resp *http.Response) (*listStargazersResponse, []byte, error)
 // updateUsers updates a slice of user from the data in a list stargazer response.
 // It also sets their yearly contributions accordingly.
 func updateUsers(users []User, response listStargazersResponse, year int) []User {
-	var (
-		found    bool
-		newUsers []User
-	)
-
-	newUsers = response.Repository.Stargazers.Users
-
-	// Update users if they already exist in the list.
+	// Each incoming user is matched individually. Treating a single match as
+	// proof that the whole page is already known would discard every other
+	// user in it.
+	knownUsers := make(map[string]int, len(users))
 	for idx := range users {
-		for _, u := range newUsers {
-			if users[idx].Login == u.Login {
-				users[idx].YearlyContributions[year] = u.Contributions.ContributionCalendar.TotalContributions + u.Contributions.PrivateContributions
-
-				users[idx].Contributions.PrivateContributions += u.Contributions.PrivateContributions
-				users[idx].Contributions.TotalCommitContributions += u.Contributions.TotalCommitContributions
-				users[idx].Contributions.TotalIssueContributions += u.Contributions.TotalIssueContributions
-				users[idx].Contributions.TotalPullRequestContributions += u.Contributions.TotalPullRequestContributions
-				users[idx].Contributions.TotalPullRequestReviewContributions += u.Contributions.TotalPullRequestReviewContributions
-				users[idx].Contributions.TotalRepositoryContributions += u.Contributions.TotalRepositoryContributions
-
-				found = true
-			}
-		}
+		knownUsers[users[idx].Login] = idx
 	}
 
-	// Otherwise, create the list of users and set their contributions appropriately.
-	if !found {
-		for idx := range newUsers {
-			newUsers[idx].YearlyContributions = make(map[int]int)
-			newUsers[idx].YearlyContributions[year] = newUsers[idx].Contributions.ContributionCalendar.TotalContributions + newUsers[idx].Contributions.PrivateContributions
+	for _, u := range response.Repository.Stargazers.Users {
+		idx, known := knownUsers[u.Login]
+		if !known {
+			u.YearlyContributions = map[int]int{
+				year: u.Contributions.ContributionCalendar.TotalContributions + u.Contributions.PrivateContributions,
+			}
+
+			users = append(users, u)
+			knownUsers[u.Login] = len(users) - 1
+
+			continue
 		}
 
-		users = append(users, newUsers...)
+		users[idx].YearlyContributions[year] = u.Contributions.ContributionCalendar.TotalContributions + u.Contributions.PrivateContributions
+
+		users[idx].Contributions.PrivateContributions += u.Contributions.PrivateContributions
+		users[idx].Contributions.TotalCommitContributions += u.Contributions.TotalCommitContributions
+		users[idx].Contributions.TotalIssueContributions += u.Contributions.TotalIssueContributions
+		users[idx].Contributions.TotalPullRequestContributions += u.Contributions.TotalPullRequestContributions
+		users[idx].Contributions.TotalPullRequestReviewContributions += u.Contributions.TotalPullRequestReviewContributions
+		users[idx].Contributions.TotalRepositoryContributions += u.Contributions.TotalRepositoryContributions
 	}
 
 	return users
