@@ -30,6 +30,22 @@ type SignedReport struct {
 	Signature []byte
 }
 
+const (
+	// privateKeyEnvVar holds the PEM encoded RSA key used to sign reports.
+	privateKeyEnvVar = "STARAUDIT_PRIVATE_KEY"
+
+	// publicKeyEnvVar holds the PEM encoded RSA key used to verify reports.
+	publicKeyEnvVar = "STARAUDIT_PUBLIC_KEY"
+)
+
+// Enabled reports whether a signing key is configured.
+//
+// Signing is opt-in: no key is embedded in the binary, so reports are only
+// signed and uploaded when one is supplied through the environment.
+func Enabled() bool {
+	return os.Getenv(privateKeyEnvVar) != ""
+}
+
 // SendReport signs a report and sends it to Astrolab.
 func SendReport(ctx stdcontext.Context, starauditCtx *staraudit_context.Context, report *trust.Report) error {
 	signature, err := signReport(report)
@@ -53,9 +69,9 @@ func signReport(report *trust.Report) ([]byte, error) {
 
 	hashedReport := sha512.Sum512(data)
 
-	pemKey := os.Getenv("STARAUDIT_PRIVATE_KEY")
+	pemKey := os.Getenv(privateKeyEnvVar)
 	if pemKey == "" {
-		pemKey = privateKeyPemData
+		return nil, fmt.Errorf("no signing key: set %s to sign and upload reports", privateKeyEnvVar)
 	}
 
 	keyBlock, _ := pem.Decode([]byte(pemKey))
@@ -103,6 +119,3 @@ func sendReport(ctx stdcontext.Context, report SignedReport) error {
 
 	return nil
 }
-
-var privateKeyPemData = `👀`
-var publicKeyPemData = `👀`
